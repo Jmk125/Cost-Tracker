@@ -2060,9 +2060,28 @@ const handleGeneratePDF = async (changeOrder) => {
                 );
             };
 
-            const hasIncompletePricing = (coId) => {
-                const linkedCosts = getLinkedCosts(coId);
-                return linkedCosts.some(cost => !cost.amount);
+            const getPricingStatusIndicator = (co) => {
+                const linkedCosts = getLinkedCosts(co.id);
+                if (linkedCosts.length === 0) return null;
+
+                const hasMissingPricing = linkedCosts.some(cost => !cost.amount);
+                if (hasMissingPricing) {
+                    return {
+                        symbol: '!',
+                        className: 'text-red-500 font-bold ml-2',
+                        tooltip: 'Pricing is still needed'
+                    };
+                }
+
+                if (co.status === 'pending') {
+                    return {
+                        symbol: '✓',
+                        className: 'text-green-600 font-bold ml-2',
+                        tooltip: 'All pricing received, review/submit'
+                    };
+                }
+
+                return null;
             };
 
             const calculateCOTotal = (coId) => {
@@ -2260,7 +2279,7 @@ const handleGeneratePDF = async (changeOrder) => {
                                 const subAmount = linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
                                 const totalAmount = calculateCOTotal(co.id);
                                 const isExpanded = expandedCOs.has(co.id);
-                                const incomplete = hasIncompletePricing(co.id);
+                                const pricingStatusIndicator = getPricingStatusIndicator(co);
 
                                 return [
                                     React.createElement('tr', {key: co.id},
@@ -2272,7 +2291,10 @@ const handleGeneratePDF = async (changeOrder) => {
                                         ),
                                         React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"}, 
                                             co.itemNumber,
-                                            incomplete && React.createElement('span', {className: "text-red-500 font-bold ml-2"}, "!")
+                                            pricingStatusIndicator && React.createElement('span', {
+                                                className: pricingStatusIndicator.className,
+                                                title: pricingStatusIndicator.tooltip
+                                            }, pricingStatusIndicator.symbol)
                                         ),
                                         React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, co.number || 'TBD'),
                                         React.createElement('td', {className: "px-6 py-4 text-sm text-gray-900"}, co.description),
