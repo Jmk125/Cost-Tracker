@@ -1224,19 +1224,44 @@ const addSubcontractorCost = (cost) => {
     const getLinkableItems = () => {
         const items = [];
         project.ownerChangeOrders.forEach(co => {
-            items.push({ type: 'change-order', id: co.id, label: `CO ${co.number} - ${co.description}` });
+            items.push({
+                type: 'change-order',
+                id: co.id,
+                label: `CO ${co.number} - ${co.description}`,
+                status: co.status || ''
+            });
         });
         project.allowanceConsumptions.forEach(consumption => {
             items.push({ 
                 type: 'allowance', 
                 id: consumption.id, 
-                label: `${consumption.number} - ${consumption.description}` 
+                label: `${consumption.number} - ${consumption.description}`,
+                status: 'Recorded'
             });
         });
         project.cmrConsumptions.forEach(consumption => {
-            items.push({ type: 'cmr', id: consumption.id, label: `CMR ${consumption.number} - ${consumption.description}` });
+            items.push({
+                type: 'cmr',
+                id: consumption.id,
+                label: `CMR ${consumption.number} - ${consumption.description}`,
+                status: 'Recorded'
+            });
         });
         return items;
+    };
+
+    const getLinkedStatusLabel = (status) => {
+        const statusMap = {
+            'pending': 'Pending',
+            'awaiting-direction': 'Awaiting Direction',
+            'submitted-ae': 'Submitted to A/E',
+            'submitted-district': 'Submitted to District',
+            'approved': 'Approved',
+            'rejected': 'Rejected',
+            'void': 'VOID'
+        };
+
+        return statusMap[status] || status || '-';
     };
 
     const getFilteredAndSortedCosts = () => {
@@ -1480,6 +1505,7 @@ const addSubcontractorCost = (cost) => {
                             onClick: () => handleSort('dateSubmitted')
                         }, "Date", sortField === 'dateSubmitted' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Linked To"),
+                        React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Linked Status"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Files"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Actions")
                     )
@@ -1499,6 +1525,7 @@ const addSubcontractorCost = (cost) => {
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, cost.amount ? `$${cost.amount.toLocaleString()}` : 'Pending'),
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, cost.dateSubmitted),
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, linkedItem ? linkedItem.label : 'Not linked'),
+                            React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, linkedItem ? getLinkedStatusLabel(linkedItem.status) : '-'),
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, 
                                 cost.files && cost.files.length > 0 ? 
                                     React.createElement('button', {
