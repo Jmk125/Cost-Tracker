@@ -210,6 +210,7 @@
         );
 
         const ConstructionCostTracker = () => {
+    const LAST_PROJECT_STORAGE_KEY = 'costTrackerLastProjectId';
     const [projects, setProjects] = useState([]);
     const [currentProject, setCurrentProject] = useState(null);
     const [activeTab, setActiveTab] = useState('subcontractor-costs');
@@ -228,35 +229,20 @@
         setIsLoading(true);
         try {
             const serverProjects = await window.api.loadProjects();
-            
+
+            const storedProjectId = parseInt(localStorage.getItem(LAST_PROJECT_STORAGE_KEY), 10);
+            const preferredProject = serverProjects.find(project => project.id === storedProjectId);
+            const fallbackProject = serverProjects[0] || null;
+
+            setProjects(serverProjects);
+            setCurrentProject(preferredProject || fallbackProject);
+
+            if (!preferredProject && fallbackProject) {
+                localStorage.setItem(LAST_PROJECT_STORAGE_KEY, fallbackProject.id.toString());
+            }
+
             if (serverProjects.length === 0) {
-                // Initialize with sample project if none exist
-                const sampleProject = {
-                    id: 1,
-                    name: "Sample Construction Project",
-                    subcontractors: ["ABC Electrical", "XYZ Plumbing", "123 HVAC"],
-                    bondPercentage: 1.5,
-                    feePercentage: 10,
-                    subcontractorCosts: [],
-                    ownerChangeOrders: [],
-                    allowances: [],
-                    allowanceConsumptions: [],
-                    cmrBudget: 50000,
-                    cmrConsumptions: [],
-                    subcontractorCostNotes: [],
-                    changeOrderNotes: [],
-                    allowanceNotes: [],
-                    allowanceConsumptionNotes: [],
-                    cmrConsumptionNotes: [],
-                    changeOrderStatusHistory: []
-                };
-                setProjects([sampleProject]);
-                setCurrentProject(sampleProject);
-                // Save the sample project to server
-                await window.api.saveProjects([sampleProject]);
-            } else {
-                setProjects(serverProjects);
-                setCurrentProject(serverProjects[0]);
+                localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
             }
         } catch (error) {
             console.error('Failed to load projects:', error);
@@ -282,6 +268,7 @@
         const newProjects = projects.map(p => p.id === updatedProject.id ? updatedProject : p);
         setProjects(newProjects);
         setCurrentProject(updatedProject);
+        localStorage.setItem(LAST_PROJECT_STORAGE_KEY, updatedProject.id.toString());
         
         // Auto-save to server
         saveProjectsToServer(newProjects);
@@ -310,6 +297,7 @@
         const newProjects = [...projects, newProject];
         setProjects(newProjects);
         setCurrentProject(newProject);
+        localStorage.setItem(LAST_PROJECT_STORAGE_KEY, newProject.id.toString());
         setShowNewProjectModal(false);
         
         // Auto-save to server
@@ -783,6 +771,9 @@
                             onChange: (e) => {
                                 const project = projects.find(p => p.id === parseInt(e.target.value));
                                 setCurrentProject(project);
+                                if (project) {
+                                    localStorage.setItem(LAST_PROJECT_STORAGE_KEY, project.id.toString());
+                                }
                             },
                             className: "px-3 py-2 border border-gray-300 rounded-md"
                         }, projects.map(p => 
