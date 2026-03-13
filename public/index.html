@@ -209,6 +209,29 @@
             </svg>
         );
 
+        const calculateCostBreakdown = (project, subAmount) => {
+            const feePercentage = project?.feePercentage || 0;
+            const bondPercentage = project?.bondPercentage || 0;
+
+            if (project?.isOfcc) {
+                const bondAmount = subAmount * (bondPercentage / 100);
+                const feeAmount = (subAmount + bondAmount) * (feePercentage / 100);
+                return {
+                    feeAmount,
+                    bondAmount,
+                    totalAmount: subAmount + bondAmount + feeAmount
+                };
+            }
+
+            const feeAmount = subAmount * (feePercentage / 100);
+            const bondAmount = (subAmount + feeAmount) * (bondPercentage / 100);
+            return {
+                feeAmount,
+                bondAmount,
+                totalAmount: subAmount + feeAmount + bondAmount
+            };
+        };
+
         const ConstructionCostTracker = () => {
     const LAST_PROJECT_STORAGE_KEY = 'costTrackerLastProjectId';
     const [projects, setProjects] = useState([]);
