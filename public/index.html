@@ -258,6 +258,29 @@
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
 
+    const calculateCostBreakdown = (project, subAmount) => {
+        const feePercentage = project?.feePercentage || 0;
+        const bondPercentage = project?.bondPercentage || 0;
+
+        if (project?.isOfcc) {
+            const bondAmount = subAmount * (bondPercentage / 100);
+            const feeAmount = (subAmount + bondAmount) * (feePercentage / 100);
+            return {
+                feeAmount,
+                bondAmount,
+                totalAmount: subAmount + bondAmount + feeAmount
+            };
+        }
+
+        const feeAmount = subAmount * (feePercentage / 100);
+        const bondAmount = (subAmount + feeAmount) * (bondPercentage / 100);
+        return {
+            feeAmount,
+            bondAmount,
+            totalAmount: subAmount + feeAmount + bondAmount
+        };
+    };
+
     // Load projects from server on mount
     useEffect(() => {
         loadProjects();
@@ -1811,6 +1834,7 @@ const updateStatusDate = () => {
             const [showForm, setShowForm] = useState(false);
             const [editingCO, setEditingCO] = useState(null);
             const [expandedCOs, setExpandedCOs] = useState(new Set());
+            const [overrideDrafts, setOverrideDrafts] = useState({});
             const [filters, setFilters] = useState({
                 number: '',
                 description: '',
@@ -3773,11 +3797,16 @@ const CostLinkingSection = ({
     linkedCosts, 
     onCostsChange, 
     updateProject,
-    defaultDescription = ''
+    defaultDescription = '',
+    onCostNavigate = null
 }) => {
     const [showAddCostForm, setShowAddCostForm] = useState(false);
     const [selectedCosts, setSelectedCosts] = useState(new Set(linkedCosts.map(c => c.id)));
     const [showAllCosts, setShowAllCosts] = useState(false);
+
+    React.useEffect(() => {
+        setSelectedCosts(new Set(linkedCosts.map(c => c.id)));
+    }, [linkedCosts]);
 
     // Helper function to get user-friendly link description
     const getLinkDescription = (cost) => {
@@ -3919,6 +3948,13 @@ const CostLinkingSection = ({
                 availableCosts.map(cost => {
                     const isSelected = selectedCosts.has(cost.id);
                     const isCurrentlyLinked = cost.isLinked && !isSelected;
+
+                    const handleCostRowClick = () => {
+                        if (!onCostNavigate) return;
+                        if (confirm('Open this subcontractor cost to review or enter pricing?')) {
+                            onCostNavigate(cost);
+                        }
+                    };
                     
                     return React.createElement('div', {
                         key: cost.id,
@@ -3926,12 +3962,14 @@ const CostLinkingSection = ({
                             isSelected ? 'border-blue-500 bg-blue-50' : 
                             isCurrentlyLinked ? 'border-gray-300 bg-gray-50' : 
                             'border-gray-300 hover:border-gray-400'
-                        }`
+                        }`,
+                        onClick: handleCostRowClick
                     },
-                        React.createElement('label', { className: "flex items-start space-x-3 cursor-pointer" },
+                        React.createElement('div', { className: "flex items-start space-x-3" },
                             React.createElement('input', {
                                 type: "checkbox",
                                 checked: isSelected,
+                                onClick: (e) => e.stopPropagation(),
                                 onChange: () => handleCostToggle(cost.id),
                                 className: "mt-1"
                             }),
@@ -4104,6 +4142,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
     const [isUploading, setIsUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [tempCostId] = useState(cost?.id || `temp_${Date.now()}`);
+    const [isDragOver, setIsDragOver] = useState(false);
 
     // Auto-update submitted CO number when subcontractor changes
     React.useEffect(() => {
@@ -4189,6 +4228,26 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
             setIsUploading(false);
             setUploadProgress(0);
         }
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(true);
+    };
+
+    const handleDragLeave = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+    };
+
+    const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+        if (isUploading) return;
+        handleFileUpload(e.dataTransfer.files);
     };
 
     const handleDeleteFile = async (file) => {
@@ -4369,7 +4428,15 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
             React.createElement('label', {className: "block text-sm font-medium text-gray-700 mb-2"}, "Backup Files"),
             
             // Upload Area
-            React.createElement('div', {className: "mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md"},
+            React.createElement('div', {
+                className: `mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-dashed rounded-md transition-colors ${
+                    isDragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
+                }`,
+                onDragOver: handleDragOver,
+                onDragEnter: handleDragOver,
+                onDragLeave: handleDragLeave,
+                onDrop: handleDrop
+            },
                 React.createElement('div', {className: "space-y-1 text-center"},
                     React.createElement(Upload, {className: "mx-auto h-12 w-12 text-gray-400"}),
                     React.createElement('div', {className: "flex text-sm text-gray-600"},
@@ -4482,6 +4549,59 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
     };
 
     const [linkedCosts, setLinkedCosts] = useState(getLinkedCosts());
+    const [editingLinkedCost, setEditingLinkedCost] = useState(null);
+
+    const getLinkableItems = () => {
+        const items = [];
+        project.ownerChangeOrders.forEach(co => {
+            items.push({
+                type: 'change-order',
+                id: co.id,
+                label: `CO ${co.number} - ${co.description}`,
+                status: co.status || ''
+            });
+        });
+        project.allowanceConsumptions.forEach(consumption => {
+            items.push({
+                type: 'allowance',
+                id: consumption.id,
+                label: `${consumption.number} - ${consumption.description}`,
+                status: 'Recorded'
+            });
+        });
+        project.cmrConsumptions.forEach(consumption => {
+            items.push({
+                type: 'cmr',
+                id: consumption.id,
+                label: `CMR ${consumption.number} - ${consumption.description}`,
+                status: 'Recorded'
+            });
+        });
+        return items;
+    };
+
+    const getNextSubcontractorNumber = (subcontractor) => {
+        const subCosts = project.subcontractorCosts.filter(existingCost => existingCost.subcontractor === subcontractor);
+        const numbers = subCosts
+            .map(existingCost => parseInt(existingCost.submittedCONumber))
+            .filter(num => !isNaN(num));
+        return numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
+    };
+
+    const updateLinkedCost = (updatedCost) => {
+        const updatedProject = {
+            ...project,
+            subcontractorCosts: project.subcontractorCosts.map(existingCost =>
+                existingCost.id === updatedCost.id ? updatedCost : existingCost
+            )
+        };
+        updateProject(updatedProject);
+
+        setLinkedCosts(prevCosts => prevCosts.map(existingCost =>
+            existingCost.id === updatedCost.id ? updatedCost : existingCost
+        ));
+        setEditingLinkedCost(null);
+    };
 
 const addStatusHistoryEntry = (coId, status, statusDate) => {
     console.log('=== ADDING STATUS HISTORY ===');
@@ -4667,13 +4787,26 @@ const handleSubmit = (e) => {
             linkedCosts: linkedCosts,
             onCostsChange: setLinkedCosts,
             updateProject: updateProject,
-            defaultDescription: formData.description
+            defaultDescription: formData.description,
+            onCostNavigate: setEditingLinkedCost
         }),
 
         React.createElement('div', {className: "flex justify-end space-x-3"},
             React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
             React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, changeOrder ? 'Update' : 'Add', " Change Order")
-        )
+        ),
+
+        editingLinkedCost && React.createElement(Modal, {
+            onClose: () => setEditingLinkedCost(null),
+            title: "Edit Linked Subcontractor Cost"
+        }, React.createElement(SubcontractorCostForm, {
+            project: project,
+            cost: editingLinkedCost,
+            onSubmit: updateLinkedCost,
+            onCancel: () => setEditingLinkedCost(null),
+            linkableItems: getLinkableItems(),
+            getNextNumber: getNextSubcontractorNumber
+        }))
     );
 };
 
