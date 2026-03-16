@@ -1847,58 +1847,30 @@ const updateStatusDate = () => {
             const [filesModal, setFilesModal] = useState({ isOpen: false, cost: null, files: [] });
             const [loadingFiles, setLoadingFiles] = useState(false);
 
-            const getOverrideDraft = (co) => {
-                return overrideDrafts[co.id] || {
-                    manualFeeAmount: typeof co.manualFeeAmount === 'number' ? co.manualFeeAmount.toString() : '',
-                    manualBondAmount: typeof co.manualBondAmount === 'number' ? co.manualBondAmount.toString() : ''
-                };
-            };
+            const setCostOverrideField = (coId, field, value) => {
+                const parsed = parseFloat(value);
+                if (Number.isNaN(parsed)) {
+                    alert('Please enter a valid number.');
+                    return;
+                }
 
-            const updateOverrideDraft = (coId, field, value) => {
-                setOverrideDrafts(prev => ({
-                    ...prev,
-                    [coId]: {
-                        ...(prev[coId] || {}),
-                        [field]: value
-                    }
-                }));
-            };
-
-            const applyCostOverrides = (coId) => {
-                const draft = overrideDrafts[coId] || {};
-                const parseOrNull = (value) => {
-                    if (value === '' || value === null || value === undefined) return null;
-                    const parsed = parseFloat(value);
-                    return Number.isNaN(parsed) ? null : Math.round(parsed * 100) / 100;
-                };
-
-                const manualFeeAmount = parseOrNull(draft.manualFeeAmount);
-                const manualBondAmount = parseOrNull(draft.manualBondAmount);
-
+                const roundedValue = Math.round(parsed * 100) / 100;
                 updateProject({
                     ...project,
                     ownerChangeOrders: project.ownerChangeOrders.map(co =>
                         co.id === coId
-                            ? { ...co, manualFeeAmount, manualBondAmount }
+                            ? { ...co, [field]: roundedValue }
                             : co
                     )
                 });
             };
 
-            const resetCostOverrides = (coId) => {
-                setOverrideDrafts(prev => ({
-                    ...prev,
-                    [coId]: {
-                        manualFeeAmount: '',
-                        manualBondAmount: ''
-                    }
-                }));
-
+            const clearCostOverrideField = (coId, field) => {
                 updateProject({
                     ...project,
                     ownerChangeOrders: project.ownerChangeOrders.map(co =>
                         co.id === coId
-                            ? { ...co, manualFeeAmount: null, manualBondAmount: null }
+                            ? { ...co, [field]: null }
                             : co
                     )
                 });
@@ -2493,64 +2465,110 @@ React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-
                                                         ? [
                                                             React.createElement('div', {key: 'bond-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
                                                                 React.createElement('span', null, `Bond (${project.bondPercentage}%):`),
-                                                                React.createElement('span', null, `${costBreakdown.bondAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                                React.createElement('span', {className: "flex items-center gap-2"},
+                                                                    React.createElement('span', null, `${costBreakdown.bondAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`),
+                                                                    React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => {
+                                                                            const currentValue = typeof co.manualBondAmount === 'number' ? co.manualBondAmount : costBreakdown.bondAmount;
+                                                                            const value = prompt('Override Bond Amount', currentValue.toString());
+                                                                            if (value === null) return;
+                                                                            if (value.trim() === '') {
+                                                                                clearCostOverrideField(co.id, 'manualBondAmount');
+                                                                                return;
+                                                                            }
+                                                                            setCostOverrideField(co.id, 'manualBondAmount', value);
+                                                                        },
+                                                                        className: "text-xs text-blue-600 hover:text-blue-800"
+                                                                    }, 'Edit'),
+                                                                    costBreakdown.hasManualBond && React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => clearCostOverrideField(co.id, 'manualBondAmount'),
+                                                                        className: "text-xs text-gray-500 hover:text-gray-700"
+                                                                    }, 'Reset')
+                                                                )
                                                             ),
                                                             React.createElement('div', {key: 'fee-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
                                                                 React.createElement('span', null, `Fee (${project.feePercentage}%):`),
-                                                                React.createElement('span', null, `${costBreakdown.feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                                React.createElement('span', {className: "flex items-center gap-2"},
+                                                                    React.createElement('span', null, `${costBreakdown.feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`),
+                                                                    React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => {
+                                                                            const currentValue = typeof co.manualFeeAmount === 'number' ? co.manualFeeAmount : costBreakdown.feeAmount;
+                                                                            const value = prompt('Override Fee Amount', currentValue.toString());
+                                                                            if (value === null) return;
+                                                                            if (value.trim() === '') {
+                                                                                clearCostOverrideField(co.id, 'manualFeeAmount');
+                                                                                return;
+                                                                            }
+                                                                            setCostOverrideField(co.id, 'manualFeeAmount', value);
+                                                                        },
+                                                                        className: "text-xs text-blue-600 hover:text-blue-800"
+                                                                    }, 'Edit'),
+                                                                    costBreakdown.hasManualFee && React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => clearCostOverrideField(co.id, 'manualFeeAmount'),
+                                                                        className: "text-xs text-gray-500 hover:text-gray-700"
+                                                                    }, 'Reset')
+                                                                )
                                                             )
                                                         ]
                                                         : [
                                                             React.createElement('div', {key: 'fee-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
                                                                 React.createElement('span', null, `Fee (${project.feePercentage}%):`),
-                                                                React.createElement('span', null, `${costBreakdown.feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                                React.createElement('span', {className: "flex items-center gap-2"},
+                                                                    React.createElement('span', null, `${costBreakdown.feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`),
+                                                                    React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => {
+                                                                            const currentValue = typeof co.manualFeeAmount === 'number' ? co.manualFeeAmount : costBreakdown.feeAmount;
+                                                                            const value = prompt('Override Fee Amount', currentValue.toString());
+                                                                            if (value === null) return;
+                                                                            if (value.trim() === '') {
+                                                                                clearCostOverrideField(co.id, 'manualFeeAmount');
+                                                                                return;
+                                                                            }
+                                                                            setCostOverrideField(co.id, 'manualFeeAmount', value);
+                                                                        },
+                                                                        className: "text-xs text-blue-600 hover:text-blue-800"
+                                                                    }, 'Edit'),
+                                                                    costBreakdown.hasManualFee && React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => clearCostOverrideField(co.id, 'manualFeeAmount'),
+                                                                        className: "text-xs text-gray-500 hover:text-gray-700"
+                                                                    }, 'Reset')
+                                                                )
                                                             ),
                                                             React.createElement('div', {key: 'bond-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
                                                                 React.createElement('span', null, `Bond (${project.bondPercentage}%):`),
-                                                                React.createElement('span', null, `${costBreakdown.bondAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                                React.createElement('span', {className: "flex items-center gap-2"},
+                                                                    React.createElement('span', null, `${costBreakdown.bondAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`),
+                                                                    React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => {
+                                                                            const currentValue = typeof co.manualBondAmount === 'number' ? co.manualBondAmount : costBreakdown.bondAmount;
+                                                                            const value = prompt('Override Bond Amount', currentValue.toString());
+                                                                            if (value === null) return;
+                                                                            if (value.trim() === '') {
+                                                                                clearCostOverrideField(co.id, 'manualBondAmount');
+                                                                                return;
+                                                                            }
+                                                                            setCostOverrideField(co.id, 'manualBondAmount', value);
+                                                                        },
+                                                                        className: "text-xs text-blue-600 hover:text-blue-800"
+                                                                    }, 'Edit'),
+                                                                    costBreakdown.hasManualBond && React.createElement('button', {
+                                                                        type: "button",
+                                                                        onClick: () => clearCostOverrideField(co.id, 'manualBondAmount'),
+                                                                        className: "text-xs text-gray-500 hover:text-gray-700"
+                                                                    }, 'Reset')
+                                                                )
                                                             )
                                                         ],
                                                     React.createElement('div', {className: "flex justify-between font-medium text-gray-900 pl-4 border-t pt-1"},
                                                         React.createElement('span', null, "Total:"),
                                                         React.createElement('span', null, `${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
-                                                    ),
-                                                    React.createElement('div', {className: "mt-3 ml-4 p-3 bg-white border border-gray-200 rounded"},
-                                                        React.createElement('p', {className: "text-xs font-medium text-gray-600 mb-2"}, "Manual Override (optional)"),
-                                                        React.createElement('div', {className: "grid grid-cols-1 md:grid-cols-2 gap-2"},
-                                                            React.createElement('label', {className: "text-xs text-gray-600"},
-                                                                "Fee Amount",
-                                                                React.createElement('input', {
-                                                                    type: "number",
-                                                                    step: "0.01",
-                                                                    value: getOverrideDraft(co).manualFeeAmount,
-                                                                    onChange: (e) => updateOverrideDraft(co.id, 'manualFeeAmount', e.target.value),
-                                                                    className: "mt-1 block w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                                                })
-                                                            ),
-                                                            React.createElement('label', {className: "text-xs text-gray-600"},
-                                                                "Bond Amount",
-                                                                React.createElement('input', {
-                                                                    type: "number",
-                                                                    step: "0.01",
-                                                                    value: getOverrideDraft(co).manualBondAmount,
-                                                                    onChange: (e) => updateOverrideDraft(co.id, 'manualBondAmount', e.target.value),
-                                                                    className: "mt-1 block w-full px-2 py-1 border border-gray-300 rounded text-sm"
-                                                                })
-                                                            )
-                                                        ),
-                                                        React.createElement('div', {className: "flex items-center gap-2 mt-2"},
-                                                            React.createElement('button', {
-                                                                type: "button",
-                                                                onClick: () => applyCostOverrides(co.id),
-                                                                className: "px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                                                            }, "Apply Override"),
-                                                            React.createElement('button', {
-                                                                type: "button",
-                                                                onClick: () => resetCostOverrides(co.id),
-                                                                className: "px-2 py-1 text-xs border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                                                            }, "Reset"),
-                                                            (costBreakdown.hasManualFee || costBreakdown.hasManualBond) && React.createElement('span', {className: "text-xs text-amber-700"}, "Manual override active")
-                                                        )
                                                     )
                                                 )
                                             )
