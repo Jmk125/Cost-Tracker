@@ -11,6 +11,26 @@ const app = express();
 const PORT = 3010;
 const DATA_FILE = path.join(__dirname, 'data', 'projects.json');
 
+function calculateCostBreakdown(subcontractorTotal, project) {
+    const feePercentage = (project && project.feePercentage) ? project.feePercentage : 10;
+    const bondPercentage = (project && project.bondPercentage) ? project.bondPercentage : 1.5;
+    const isOfcc = !!(project && project.isOfcc);
+
+    if (isOfcc) {
+        const bondAmount = Math.round(subcontractorTotal * (bondPercentage / 100) * 100) / 100;
+        const subtotal = Math.round((subcontractorTotal + bondAmount) * 100) / 100;
+        const feeAmount = Math.round(subtotal * (feePercentage / 100) * 100) / 100;
+        const totalCost = Math.round((subtotal + feeAmount) * 100) / 100;
+        return { feeAmount, bondAmount, subtotal, totalCost };
+    }
+
+    const feeAmount = Math.round(subcontractorTotal * (feePercentage / 100) * 100) / 100;
+    const subtotal = Math.round((subcontractorTotal + feeAmount) * 100) / 100;
+    const bondAmount = Math.round(subtotal * (bondPercentage / 100) * 100) / 100;
+    const totalCost = Math.round((subtotal + bondAmount) * 100) / 100;
+    return { feeAmount, bondAmount, subtotal, totalCost };
+}
+
 // Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -61,13 +81,7 @@ async function populateChangeOrderForm(form, linkedCosts, changeOrderData, proje
         
         // Calculate totals with proper rounding (same as Excel)
         const subcontractorTotal = Math.round(linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0) * 100) / 100;
-        const feePercentage = (project && project.feePercentage) ? project.feePercentage : 10;
-        const bondPercentage = (project && project.bondPercentage) ? project.bondPercentage : 1.5;
-        
-        const feeAmount = Math.round(subcontractorTotal * (feePercentage / 100) * 100) / 100;
-        const subtotal = Math.round((subcontractorTotal + feeAmount) * 100) / 100;
-        const bondAmount = Math.round(subtotal * (bondPercentage / 100) * 100) / 100;
-        const totalCost = Math.round((subtotal + bondAmount) * 100) / 100;
+        const { feeAmount, bondAmount, subtotal, totalCost } = calculateCostBreakdown(subcontractorTotal, project);
         
         console.log('PDF Calculated values:');
         console.log('- Subcontractor Total:', subcontractorTotal);
@@ -149,13 +163,7 @@ async function populateExcelTemplate(worksheet, linkedCosts, changeOrderData, pr
         
         // Calculate totals with proper rounding
         const subcontractorTotal = Math.round(linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0) * 100) / 100;
-        const feePercentage = (project && project.feePercentage) ? project.feePercentage : 10;
-        const bondPercentage = (project && project.bondPercentage) ? project.bondPercentage : 1.5;
-        
-        const feeAmount = Math.round(subcontractorTotal * (feePercentage / 100) * 100) / 100;
-        const subtotal = Math.round((subcontractorTotal + feeAmount) * 100) / 100;
-        const bondAmount = Math.round(subtotal * (bondPercentage / 100) * 100) / 100;
-        const totalCost = Math.round((subtotal + bondAmount) * 100) / 100;
+        const { feeAmount, bondAmount, subtotal, totalCost } = calculateCostBreakdown(subcontractorTotal, project);
         
         console.log('Calculated values:');
         console.log('- Subcontractor Total:', subcontractorTotal);

@@ -209,6 +209,37 @@
             </svg>
         );
 
+        const calculateCostBreakdown = (project, subAmount) => {
+            const feePercentage = project?.feePercentage || 0;
+            const bondPercentage = project?.bondPercentage || 0;
+            const roundCurrency = (amount) => Math.round((amount || 0) * 100) / 100;
+            const subcontractorTotal = roundCurrency(subAmount);
+
+            if (project?.isOfcc) {
+                const bondAmount = roundCurrency(subcontractorTotal * (bondPercentage / 100));
+                const subtotal = roundCurrency(subcontractorTotal + bondAmount);
+                const feeAmount = roundCurrency(subtotal * (feePercentage / 100));
+                const totalAmount = roundCurrency(subtotal + feeAmount);
+                return {
+                    feeAmount,
+                    bondAmount,
+                    subtotal,
+                    totalAmount
+                };
+            }
+
+            const feeAmount = roundCurrency(subcontractorTotal * (feePercentage / 100));
+            const subtotal = roundCurrency(subcontractorTotal + feeAmount);
+            const bondAmount = roundCurrency(subtotal * (bondPercentage / 100));
+            const totalAmount = roundCurrency(subtotal + bondAmount);
+            return {
+                feeAmount,
+                bondAmount,
+                subtotal,
+                totalAmount
+            };
+        };
+
         const ConstructionCostTracker = () => {
     const LAST_PROJECT_STORAGE_KEY = 'costTrackerLastProjectId';
     const [projects, setProjects] = useState([]);
@@ -281,6 +312,7 @@
             subcontractors: [],
             bondPercentage: 1.5,
             feePercentage: 10,
+            isOfcc: false,
             subcontractorCosts: [],
             ownerChangeOrders: [],
             allowances: [],
@@ -402,9 +434,7 @@
             );
             
             const subAmount = linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
-            const feeAmount = subAmount * (currentProject.feePercentage / 100);
-            const bondAmount = (subAmount + feeAmount) * (currentProject.bondPercentage / 100);
-            const totalAmount = subAmount + feeAmount + bondAmount;
+            const { feeAmount, bondAmount, totalAmount } = calculateCostBreakdown(currentProject, subAmount);
             
             const notes = getNotesText(co.id, currentProject.changeOrderNotes);
             
@@ -619,6 +649,7 @@
             ['Project Settings'],
             ['Bond Percentage', `${currentProject.bondPercentage}%`],
             ['Fee Percentage', `${currentProject.feePercentage}%`],
+            ['Project Type', currentProject.isOfcc ? 'OFCC' : 'Non-OFCC'],
             [''],
             ['Subcontractors'],
             ...currentProject.subcontractors.map(sub => ['', sub]),
@@ -630,9 +661,7 @@
                     cost.linkedType === 'change-order' && cost.linkedId === co.id
                 );
                 const subAmount = linkedCosts.reduce((costSum, cost) => costSum + (cost.amount || 0), 0);
-                const feeAmount = subAmount * (currentProject.feePercentage / 100);
-                const bondAmount = (subAmount + feeAmount) * (currentProject.bondPercentage / 100);
-                return sum + subAmount + feeAmount + bondAmount;
+                return sum + calculateCostBreakdown(currentProject, subAmount).totalAmount;
             }, 0)],
             ['Total Allowances Budget', currentProject.allowances.reduce((sum, allowance) => sum + allowance.budget, 0)],
             ['Total Allowances Spent', currentProject.allowanceConsumptions.reduce((sum, consumption) => {
@@ -698,6 +727,7 @@
                 // Ensure numeric fields exist
                 if (typeof project.bondPercentage !== 'number') project.bondPercentage = 1.5;
                 if (typeof project.feePercentage !== 'number') project.feePercentage = 10;
+                if (typeof project.isOfcc !== 'boolean') project.isOfcc = false;
                 if (typeof project.cmrBudget !== 'number') project.cmrBudget = 0;
             });
             
@@ -2078,9 +2108,7 @@ const handleGeneratePDF = async (changeOrder) => {
             const calculateCOTotal = (coId) => {
                 const linkedCosts = getLinkedCosts(coId);
                 const subTotal = linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
-                const feeAmount = subTotal * (project.feePercentage / 100);
-                const bondAmount = (subTotal + feeAmount) * (project.bondPercentage / 100);
-                return subTotal + feeAmount + bondAmount;
+                return calculateCostBreakdown(project, subTotal).totalAmount;
             };
 
             const getFilteredAndSortedCOs = () => {
@@ -2268,7 +2296,8 @@ const handleGeneratePDF = async (changeOrder) => {
                             filteredCOs.map(co => {
                                 const linkedCosts = getLinkedCosts(co.id);
                                 const subAmount = linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
-                                const totalAmount = calculateCOTotal(co.id);
+                                const costBreakdown = calculateCostBreakdown(project, subAmount);
+                                const totalAmount = costBreakdown.totalAmount;
                                 const isExpanded = expandedCOs.has(co.id);
                                 const pricingStatusIndicator = getPricingStatusIndicator(co);
 
@@ -2369,19 +2398,32 @@ React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-
                                                 React.createElement('div', {className: "border-t pt-2 mt-2"},
                                                     React.createElement('div', {className: "flex justify-between text-sm text-gray-600 pl-4"},
                                                         React.createElement('span', null, "Subtotal:"),
-                                                        React.createElement('span', null, `${subAmount.toLocaleString()}`)
+                                                        React.createElement('span', null, `${subAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
                                                     ),
-                                                    React.createElement('div', {className: "flex justify-between text-sm text-gray-600 pl-4"},
-                                                        React.createElement('span', null, `Fee (${project.feePercentage}%):`),
-                                                        React.createElement('span', null, `${(subAmount * (project.feePercentage / 100)).toLocaleString()}`)
-                                                    ),
-                                                    React.createElement('div', {className: "flex justify-between text-sm text-gray-600 pl-4"},
-                                                        React.createElement('span', null, `Bond (${project.bondPercentage}%):`),
-                                                        React.createElement('span', null, `${((subAmount + subAmount * (project.feePercentage / 100)) * (project.bondPercentage / 100)).toLocaleString()}`)
-                                                    ),
+                                                    project.isOfcc
+                                                        ? [
+                                                            React.createElement('div', {key: 'bond-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
+                                                                React.createElement('span', null, `Bond (${project.bondPercentage}%):`),
+                                                                React.createElement('span', null, `${costBreakdown.bondAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                            ),
+                                                            React.createElement('div', {key: 'fee-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
+                                                                React.createElement('span', null, `Fee (${project.feePercentage}%):`),
+                                                                React.createElement('span', null, `${costBreakdown.feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                            )
+                                                        ]
+                                                        : [
+                                                            React.createElement('div', {key: 'fee-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
+                                                                React.createElement('span', null, `Fee (${project.feePercentage}%):`),
+                                                                React.createElement('span', null, `${costBreakdown.feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                            ),
+                                                            React.createElement('div', {key: 'bond-line', className: "flex justify-between text-sm text-gray-600 pl-4"},
+                                                                React.createElement('span', null, `Bond (${project.bondPercentage}%):`),
+                                                                React.createElement('span', null, `${costBreakdown.bondAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+                                                            )
+                                                        ],
                                                     React.createElement('div', {className: "flex justify-between font-medium text-gray-900 pl-4 border-t pt-1"},
                                                         React.createElement('span', null, "Total:"),
-                                                        React.createElement('span', null, `${totalAmount.toLocaleString()}`)
+                                                        React.createElement('span', null, `${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
                                                     )
                                                 )
                                             )
@@ -4842,6 +4884,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             const [settings, setSettings] = useState({
                 bondPercentage: project.bondPercentage,
                 feePercentage: project.feePercentage,
+                isOfcc: !!project.isOfcc,
                 subcontractors: [...project.subcontractors],
                 newSubcontractor: '',
                 templatePath: project.templatePath || ''
@@ -4894,6 +4937,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                     ...project,
                     bondPercentage: parseFloat(settings.bondPercentage),
                     feePercentage: parseFloat(settings.feePercentage),
+                    isOfcc: settings.isOfcc,
                     subcontractors: settings.subcontractors,
                     templatePath: settings.templatePath
                 });
@@ -4938,6 +4982,23 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                             onChange: (e) => setSettings({...settings, feePercentage: e.target.value}),
                             className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
                         })
+                    )
+                ),
+
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Project Type"),
+                    React.createElement('select', {
+                        value: settings.isOfcc ? 'ofcc' : 'non-ofcc',
+                        onChange: (e) => setSettings({...settings, isOfcc: e.target.value === 'ofcc'}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                    },
+                        React.createElement('option', {value: 'non-ofcc'}, 'Non-OFCC (Fee before Bond)'),
+                        React.createElement('option', {value: 'ofcc'}, 'OFCC (Bond before Fee)')
+                    ),
+                    React.createElement('p', {className: "mt-1 text-xs text-gray-500"},
+                        settings.isOfcc
+                            ? 'OFCC projects calculate bond first, then apply fee to subtotal + bond.'
+                            : 'Non-OFCC projects calculate fee first, then apply bond to subtotal + fee.'
                     )
                 ),
 
