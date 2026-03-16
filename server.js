@@ -11,24 +11,43 @@ const app = express();
 const PORT = 3010;
 const DATA_FILE = path.join(__dirname, 'data', 'projects.json');
 
-function calculateCostBreakdown(subcontractorTotal, project) {
+function calculateCostBreakdown(subcontractorTotal, project, changeOrderData = null) {
     const feePercentage = (project && project.feePercentage) ? project.feePercentage : 10;
     const bondPercentage = (project && project.bondPercentage) ? project.bondPercentage : 1.5;
     const isOfcc = !!(project && project.isOfcc);
+    const roundCurrency = (amount) => Math.round((amount || 0) * 100) / 100;
+    const roundedSubcontractorTotal = roundCurrency(subcontractorTotal);
+
+    let calculatedFeeAmount;
+    let calculatedBondAmount;
 
     if (isOfcc) {
-        const bondAmount = Math.round(subcontractorTotal * (bondPercentage / 100) * 100) / 100;
-        const subtotal = Math.round((subcontractorTotal + bondAmount) * 100) / 100;
-        const feeAmount = Math.round(subtotal * (feePercentage / 100) * 100) / 100;
-        const totalCost = Math.round((subtotal + feeAmount) * 100) / 100;
-        return { feeAmount, bondAmount, subtotal, totalCost };
+        const initialFeeAmount = roundCurrency(roundedSubcontractorTotal * (feePercentage / 100));
+        const bondBase = roundCurrency(roundedSubcontractorTotal + initialFeeAmount);
+        calculatedBondAmount = roundCurrency(bondBase * (bondPercentage / 100));
+        calculatedFeeAmount = roundCurrency((roundedSubcontractorTotal + calculatedBondAmount) * (feePercentage / 100));
+    } else {
+        calculatedFeeAmount = roundCurrency(roundedSubcontractorTotal * (feePercentage / 100));
+        const bondBase = roundCurrency(roundedSubcontractorTotal + calculatedFeeAmount);
+        calculatedBondAmount = roundCurrency(bondBase * (bondPercentage / 100));
     }
 
-    const feeAmount = Math.round(subcontractorTotal * (feePercentage / 100) * 100) / 100;
-    const subtotal = Math.round((subcontractorTotal + feeAmount) * 100) / 100;
-    const bondAmount = Math.round(subtotal * (bondPercentage / 100) * 100) / 100;
-    const totalCost = Math.round((subtotal + bondAmount) * 100) / 100;
-    return { feeAmount, bondAmount, subtotal, totalCost };
+    const hasManualFee = changeOrderData && typeof changeOrderData.manualFeeAmount === 'number' && !Number.isNaN(changeOrderData.manualFeeAmount);
+    const hasManualBond = changeOrderData && typeof changeOrderData.manualBondAmount === 'number' && !Number.isNaN(changeOrderData.manualBondAmount);
+    const feeAmount = hasManualFee ? roundCurrency(changeOrderData.manualFeeAmount) : calculatedFeeAmount;
+    const bondAmount = hasManualBond ? roundCurrency(changeOrderData.manualBondAmount) : calculatedBondAmount;
+    const totalCost = roundCurrency(roundedSubcontractorTotal + feeAmount + bondAmount);
+
+    return {
+        feeAmount,
+        bondAmount,
+        subtotal: roundedSubcontractorTotal,
+        totalCost,
+        calculatedFeeAmount,
+        calculatedBondAmount,
+        hasManualFee,
+        hasManualBond
+    };
 }
 
 // Middleware
@@ -81,7 +100,7 @@ async function populateChangeOrderForm(form, linkedCosts, changeOrderData, proje
         
         // Calculate totals with proper rounding (same as Excel)
         const subcontractorTotal = Math.round(linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0) * 100) / 100;
-        const { feeAmount, bondAmount, subtotal, totalCost } = calculateCostBreakdown(subcontractorTotal, project);
+        const { feeAmount, bondAmount, subtotal, totalCost } = calculateCostBreakdown(subcontractorTotal, project, changeOrderData);
         
         console.log('PDF Calculated values:');
         console.log('- Subcontractor Total:', subcontractorTotal);
@@ -163,7 +182,7 @@ async function populateExcelTemplate(worksheet, linkedCosts, changeOrderData, pr
         
         // Calculate totals with proper rounding
         const subcontractorTotal = Math.round(linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0) * 100) / 100;
-        const { feeAmount, bondAmount, subtotal, totalCost } = calculateCostBreakdown(subcontractorTotal, project);
+        const { feeAmount, bondAmount, subtotal, totalCost } = calculateCostBreakdown(subcontractorTotal, project, changeOrderData);
         
         console.log('Calculated values:');
         console.log('- Subcontractor Total:', subcontractorTotal);
