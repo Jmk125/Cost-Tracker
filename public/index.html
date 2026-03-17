@@ -405,6 +405,9 @@
                         const co = currentProject.ownerChangeOrders.find(c => c.id === cost.linkedId);
                         linkedTo = co ? `CO ${co.number || co.itemNumber} - ${co.description}` : 'Unknown Change Order';
                         break;
+                    case 'no-cost':
+                        linkedTo = 'No Cost';
+                        break;
                     case 'allowance':
                         const consumption = currentProject.allowanceConsumptions.find(c => c.id === cost.linkedId);
                         if (consumption) {
@@ -1274,6 +1277,12 @@ const addSubcontractorCost = (cost) => {
 
     const getLinkableItems = () => {
         const items = [];
+        items.push({
+            type: 'no-cost',
+            id: 1,
+            label: 'No Cost',
+            status: 'N/A'
+        });
         project.ownerChangeOrders.forEach(co => {
             items.push({
                 type: 'change-order',
@@ -1302,6 +1311,10 @@ const addSubcontractorCost = (cost) => {
     };
 
     const getLinkedStatusLabel = (status) => {
+        if (status === 'N/A') {
+            return status;
+        }
+
         const statusMap = {
             'pending': 'Pending',
             'awaiting-direction': 'Awaiting Direction',
@@ -3813,6 +3826,8 @@ const CostLinkingSection = ({
         if (!cost.linkedType || !cost.linkedId) return null;
         
         switch (cost.linkedType) {
+            case 'no-cost':
+                return 'No Cost';
             case 'change-order':
                 const co = project.ownerChangeOrders.find(c => c.id === cost.linkedId);
                 return co ? `CO ${co.number || co.itemNumber} - ${co.description?.substring(0, 30)}...` : 'Unknown Change Order';
@@ -3832,7 +3847,9 @@ const CostLinkingSection = ({
     };
 
     // Get all subcontractor costs that could be linked
-    const allCosts = project.subcontractorCosts.map(cost => ({
+    const allCosts = project.subcontractorCosts
+    .filter(cost => !(linkType === 'change-order' && cost.linkedType === 'no-cost'))
+    .map(cost => ({
         ...cost,
         isLinked: cost.linkedType && cost.linkedId,
         linkDescription: getLinkDescription(cost)
@@ -4553,6 +4570,12 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
 
     const getLinkableItems = () => {
         const items = [];
+        items.push({
+            type: 'no-cost',
+            id: 1,
+            label: 'No Cost',
+            status: 'N/A'
+        });
         project.ownerChangeOrders.forEach(co => {
             items.push({
                 type: 'change-order',
