@@ -4636,12 +4636,13 @@ const handleSubmit = (e) => {
     const statusChanged = changeOrder && changeOrder.status !== formData.status;
     
     // Update all subcontractor costs based on selections
+    const linkedCostMap = new Map(linkedCosts.map(cost => [cost.id, cost]));
     const updatedCosts = project.subcontractorCosts.map(cost => {
-        const isSelected = linkedCosts.find(lc => lc.id === cost.id);
-        
-        if (isSelected) {
-            // Link this cost to the current change order
-            return { ...cost, linkedType: 'change-order', linkedId: coId };
+        const selectedCost = linkedCostMap.get(cost.id);
+
+        if (selectedCost) {
+            // Keep all latest edited values from the linked cost editor, and ensure linkage to this CO
+            return { ...selectedCost, linkedType: 'change-order', linkedId: coId };
         } else if (cost.linkedType === 'change-order' && cost.linkedId === coId) {
             // Unlink costs that were previously linked to this CO but are no longer selected
             return { ...cost, linkedType: '', linkedId: '' };
@@ -4686,7 +4687,8 @@ const handleSubmit = (e) => {
     onSubmit(newOrUpdatedCO);
 };
     // Rest of the form JSX stays the same...
-    return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
+    return React.createElement(React.Fragment, null,
+        React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
         React.createElement('div', {className: "grid grid-cols-2 gap-4"},
             React.createElement('div', null,
                 React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Item Number"),
@@ -4794,20 +4796,21 @@ const handleSubmit = (e) => {
         React.createElement('div', {className: "flex justify-end space-x-3"},
             React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
             React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, changeOrder ? 'Update' : 'Add', " Change Order")
-        ),
+        )
+    ),
 
-        editingLinkedCost && React.createElement(Modal, {
-            onClose: () => setEditingLinkedCost(null),
-            title: "Edit Linked Subcontractor Cost"
-        }, React.createElement(SubcontractorCostForm, {
-            project: project,
-            cost: editingLinkedCost,
-            onSubmit: updateLinkedCost,
-            onCancel: () => setEditingLinkedCost(null),
-            linkableItems: getLinkableItems(),
-            getNextNumber: getNextSubcontractorNumber
-        }))
-    );
+    editingLinkedCost && React.createElement(Modal, {
+        onClose: () => setEditingLinkedCost(null),
+        title: "Edit Linked Subcontractor Cost"
+    }, React.createElement(SubcontractorCostForm, {
+        project: project,
+        cost: editingLinkedCost,
+        onSubmit: updateLinkedCost,
+        onCancel: () => setEditingLinkedCost(null),
+        linkableItems: getLinkableItems(),
+        getNextNumber: getNextSubcontractorNumber
+    }))
+);
 };
 
         const AllowanceForm = ({ allowance, onSubmit, onCancel }) => {
