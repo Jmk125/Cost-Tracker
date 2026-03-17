@@ -840,11 +840,22 @@
                     status: consumption.status || (project.isOfcc ? 'pending' : 'approved')
                 }));
 
-                project.subcontractorCosts = project.subcontractorCosts.map(cost => ({
-                    ...cost,
-                    requiredWork: Boolean(cost.requiredWork),
-                    hasExposure: Boolean(cost.hasExposure)
-                }));
+                project.subcontractorCosts = project.subcontractorCosts.map(cost => {
+                    const receivedAmount = typeof cost.amount === 'number' ? cost.amount : (parseFloat(cost.amount) || 0);
+                    let projectedAmount = typeof cost.projectedAmount === 'number' ? cost.projectedAmount : (parseFloat(cost.projectedAmount) || 0);
+
+                    if (receivedAmount > 0 && projectedAmount > 0) {
+                        projectedAmount = 0;
+                    }
+
+                    return {
+                        ...cost,
+                        amount: receivedAmount,
+                        projectedAmount,
+                        requiredWork: Boolean(cost.requiredWork),
+                        hasExposure: Boolean(cost.hasExposure)
+                    };
+                });
             });
             
             return { valid: true, data };
@@ -3562,6 +3573,8 @@ const ExposureTab = ({ project, updateProject }) => {
                 const statusInfo = getLinkedItemStatusInfo(project, cost);
                 return {
                     ...cost,
+                    receivedAmount: cost.amount || 0,
+                    projectedAmount: cost.projectedAmount || 0,
                     linkedLabel: getLinkedLabel(cost),
                     linkedStatusLabel: statusInfo.statusLabel
                 };
@@ -3580,8 +3593,8 @@ const ExposureTab = ({ project, updateProject }) => {
             mapped.sort((a, b) => {
                 const direction = sortDirection === 'asc' ? 1 : -1;
 
-                if (sortField === 'amount') {
-                    return ((a.amount || 0) - (b.amount || 0)) * direction;
+                if (sortField === 'receivedAmount' || sortField === 'projectedAmount') {
+                    return ((a[sortField] || 0) - (b[sortField] || 0)) * direction;
                 }
 
                 if (sortField === 'requiredWork' || sortField === 'hasExposure') {
@@ -3610,13 +3623,21 @@ const ExposureTab = ({ project, updateProject }) => {
 
     const exposureCosts = getFilteredAndSortedExposureCosts();
 
-    const requiredTotal = exposureCosts
+    const requiredReceivedTotal = exposureCosts
         .filter(cost => cost.requiredWork)
-        .reduce((sum, cost) => sum + (cost.amount || 0), 0);
+        .reduce((sum, cost) => sum + (cost.receivedAmount || 0), 0);
 
-    const exposureTotal = exposureCosts
+    const requiredProjectedTotal = exposureCosts
+        .filter(cost => cost.requiredWork)
+        .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
+
+    const exposureReceivedTotal = exposureCosts
         .filter(cost => cost.hasExposure)
-        .reduce((sum, cost) => sum + (cost.amount || 0), 0);
+        .reduce((sum, cost) => sum + (cost.receivedAmount || 0), 0);
+
+    const exposureProjectedTotal = exposureCosts
+        .filter(cost => cost.hasExposure)
+        .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
 
     const toggleFlag = (costId, field) => {
         updateProject({
@@ -3627,9 +3648,36 @@ const ExposureTab = ({ project, updateProject }) => {
         });
     };
 
+    const updateCostAmount = (costId, field, value) => {
+        const numericValue = parseFloat(value);
+        const parsedValue = Number.isNaN(numericValue) ? 0 : numericValue;
+
+        updateProject({
+            ...project,
+            subcontractorCosts: project.subcontractorCosts.map(cost => {
+                if (cost.id !== costId) return cost;
+
+                const updated = {
+                    ...cost,
+                    [field]: parsedValue
+                };
+
+                if (field === 'amount' && parsedValue > 0) {
+                    updated.projectedAmount = 0;
+                }
+
+                if (field === 'projectedAmount' && parsedValue > 0) {
+                    updated.amount = 0;
+                }
+
+                return updated;
+            })
+        });
+    };
+
     const getRiskHighlightClass = (cost) => {
-        const amount = cost.amount || 0;
-        if (amount !== 0) return '';
+        const hasNoAmount = (cost.receivedAmount || 0) === 0 && (cost.projectedAmount || 0) === 0;
+        if (!hasNoAmount) return '';
         if (cost.hasExposure) return 'bg-red-50';
         if (cost.requiredWork) return 'bg-orange-50';
         return '';
@@ -3638,18 +3686,26 @@ const ExposureTab = ({ project, updateProject }) => {
     return React.createElement('div', {className: 'space-y-6'},
         React.createElement('div', {className: 'bg-white rounded-lg shadow p-6'},
             React.createElement('h2', {className: 'text-xl font-semibold mb-4'}, 'Exposure'),
-            React.createElement('div', {className: 'grid grid-cols-3 gap-6'},
+            React.createElement('div', {className: 'grid grid-cols-5 gap-6'},
                 React.createElement('div', null,
                     React.createElement('div', {className: 'text-sm text-gray-500'}, 'Items'),
                     React.createElement('div', {className: 'text-2xl font-bold text-gray-900'}, exposureCosts.length)
                 ),
                 React.createElement('div', null,
-                    React.createElement('div', {className: 'text-sm text-gray-500'}, 'Required Work Total'),
-                    React.createElement('div', {className: 'text-2xl font-bold text-amber-600'}, `$${requiredTotal.toLocaleString()}`)
+                    React.createElement('div', {className: 'text-sm text-gray-500'}, 'Required Received'),
+                    React.createElement('div', {className: 'text-2xl font-bold text-amber-700'}, `$${requiredReceivedTotal.toLocaleString()}`)
                 ),
                 React.createElement('div', null,
-                    React.createElement('div', {className: 'text-sm text-gray-500'}, 'Exposure Total (Work Performed)'),
-                    React.createElement('div', {className: 'text-2xl font-bold text-red-600'}, `$${exposureTotal.toLocaleString()}`)
+                    React.createElement('div', {className: 'text-sm text-gray-500'}, 'Required Projected'),
+                    React.createElement('div', {className: 'text-2xl font-bold text-amber-500'}, `$${requiredProjectedTotal.toLocaleString()}`)
+                ),
+                React.createElement('div', null,
+                    React.createElement('div', {className: 'text-sm text-gray-500'}, 'Exposure Received'),
+                    React.createElement('div', {className: 'text-2xl font-bold text-red-700'}, `$${exposureReceivedTotal.toLocaleString()}`)
+                ),
+                React.createElement('div', null,
+                    React.createElement('div', {className: 'text-sm text-gray-500'}, 'Exposure Projected'),
+                    React.createElement('div', {className: 'text-2xl font-bold text-red-500'}, `$${exposureProjectedTotal.toLocaleString()}`)
                 )
             )
         ),
@@ -3713,7 +3769,8 @@ const ExposureTab = ({ project, updateProject }) => {
                         React.createElement('th', {onClick: () => handleSort('submittedCONumber'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Submitted CO #', sortField === 'submittedCONumber' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {onClick: () => handleSort('subcontractor'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Subcontractor', sortField === 'subcontractor' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {onClick: () => handleSort('description'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Description', sortField === 'description' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
-                        React.createElement('th', {onClick: () => handleSort('amount'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Amount', sortField === 'amount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('receivedAmount'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Received Amount', sortField === 'receivedAmount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('projectedAmount'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Projected Amount', sortField === 'projectedAmount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {onClick: () => handleSort('linkedLabel'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Linked To', sortField === 'linkedLabel' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {onClick: () => handleSort('linkedStatusLabel'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Linked Status', sortField === 'linkedStatusLabel' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {onClick: () => handleSort('requiredWork'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Required Work', sortField === 'requiredWork' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
@@ -3726,7 +3783,28 @@ const ExposureTab = ({ project, updateProject }) => {
                             React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, cost.submittedCONumber || cost.contractChangeNumber || '-'),
                             React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, cost.subcontractor || '-'),
                             React.createElement('td', {className: 'px-6 py-4 text-sm text-gray-900'}, cost.description || '-'),
-                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, `$${(cost.amount || 0).toLocaleString()}`),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'},
+                                React.createElement('input', {
+                                    type: 'number',
+                                    step: '0.01',
+                                    min: '0',
+                                    value: cost.receivedAmount || '',
+                                    disabled: (cost.projectedAmount || 0) > 0,
+                                    onChange: (e) => updateCostAmount(cost.id, 'amount', e.target.value),
+                                    className: 'w-28 px-2 py-1 border border-gray-300 rounded text-sm disabled:bg-gray-100'
+                                })
+                            ),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'},
+                                React.createElement('input', {
+                                    type: 'number',
+                                    step: '0.01',
+                                    min: '0',
+                                    value: cost.projectedAmount || '',
+                                    disabled: (cost.receivedAmount || 0) > 0,
+                                    onChange: (e) => updateCostAmount(cost.id, 'projectedAmount', e.target.value),
+                                    className: 'w-28 px-2 py-1 border border-gray-300 rounded text-sm disabled:bg-gray-100'
+                                })
+                            ),
                             React.createElement('td', {className: 'px-6 py-4 text-sm text-gray-900'}, cost.linkedLabel),
                             React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, cost.linkedStatusLabel),
                             React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'},
