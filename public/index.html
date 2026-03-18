@@ -3547,6 +3547,7 @@ const ExposureTab = ({ project, updateProject }) => {
     });
     const [sortField, setSortField] = useState('');
     const [sortDirection, setSortDirection] = useState('asc');
+    const [notesModal, setNotesModal] = useState({ isOpen: false, itemId: null, title: '' });
 
     const getLinkedLabel = (cost) => {
         if (!cost.linkedType || !cost.linkedId) return 'Not Linked';
@@ -3662,6 +3663,44 @@ const ExposureTab = ({ project, updateProject }) => {
         });
     };
 
+    const getExposureItemNotes = (itemId) => {
+        return project.subcontractorCostNotes?.filter(note => note.itemId === itemId) || [];
+    };
+
+    const addExposureNote = (itemId, content) => {
+        const newNote = {
+            id: Date.now(),
+            itemId,
+            content,
+            timestamp: new Date().toISOString()
+        };
+
+        updateProject({
+            ...project,
+            subcontractorCostNotes: [...(project.subcontractorCostNotes || []), newNote]
+        });
+    };
+
+    const deleteExposureNote = (noteId) => {
+        updateProject({
+            ...project,
+            subcontractorCostNotes: (project.subcontractorCostNotes || []).filter(note => note.id !== noteId)
+        });
+    };
+
+    const openExposureNotesModal = (cost) => {
+        setNotesModal({
+            isOpen: true,
+            itemId: cost.id,
+            title: `${cost.subcontractor || 'Unknown Sub'} - ${cost.description || 'No Description'}`
+        });
+    };
+
+    const closeExposureNotesModal = () => {
+        setNotesModal({ isOpen: false, itemId: null, title: '' });
+    };
+
+
     const getRiskHighlightClass = (cost) => {
         const hasNoAmount = (cost.receivedAmount || 0) === 0 && (cost.projectedAmount || 0) === 0;
         if (!hasNoAmount) return '';
@@ -3770,7 +3809,8 @@ const ExposureTab = ({ project, updateProject }) => {
                         React.createElement('th', {onClick: () => handleSort('linkedLabel'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Linked To', sortField === 'linkedLabel' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {onClick: () => handleSort('linkedStatusLabel'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Linked Status', sortField === 'linkedStatusLabel' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                         React.createElement('th', {onClick: () => handleSort('requiredWork'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Required Work', sortField === 'requiredWork' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
-                        React.createElement('th', {onClick: () => handleSort('hasExposure'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Work Performed', sortField === 'hasExposure' && (sortDirection === 'asc' ? ' ↑' : ' ↓'))
+                        React.createElement('th', {onClick: () => handleSort('hasExposure'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Work Performed', sortField === 'hasExposure' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'}, 'Actions')
                     )
                 ),
                 React.createElement('tbody', {className: 'bg-white divide-y divide-gray-200'},
@@ -3806,13 +3846,29 @@ const ExposureTab = ({ project, updateProject }) => {
                                     checked: Boolean(cost.hasExposure),
                                     onChange: () => toggleFlag(cost.id, 'hasExposure')
                                 })
+                            ),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm font-medium'},
+                                React.createElement('button', {
+                                    onClick: () => openExposureNotesModal(cost),
+                                    className: `p-1 rounded ${getExposureItemNotes(cost.id).length > 0 ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900`,
+                                    title: 'Exposure item notes'
+                                }, React.createElement(MessageSquare))
                             )
                         )
                     )
                 )
             ),
             exposureCosts.length === 0 && React.createElement('div', {className: 'p-6 text-sm text-gray-500'}, 'No exposure items match current filters.')
-        )
+        ),
+
+        React.createElement(NotesModal, {
+            isOpen: notesModal.isOpen,
+            onClose: closeExposureNotesModal,
+            title: notesModal.title,
+            notes: notesModal.itemId ? getExposureItemNotes(notesModal.itemId) : [],
+            onAddNote: (content) => addExposureNote(notesModal.itemId, content),
+            onDeleteNote: deleteExposureNote
+        })
     );
 };
 
