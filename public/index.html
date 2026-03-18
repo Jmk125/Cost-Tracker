@@ -315,6 +315,8 @@
         };
 
 
+        const NOTE_AUTHOR_STORAGE_KEY = 'costTrackerNoteAuthor';
+
         const NOTE_ARRAY_FIELDS = [
             'subcontractorCostNotes',
             'changeOrderNotes',
@@ -383,6 +385,7 @@
 
     // Load projects from server on mount
     useEffect(() => {
+        localStorage.removeItem(NOTE_AUTHOR_STORAGE_KEY);
         loadProjects();
     }, []);
 
