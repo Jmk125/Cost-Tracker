@@ -355,6 +355,47 @@
 
         const sanitizeProjectsForStorage = (projects) => (projects || []).map(sanitizeProjectNotes);
 
+        const getCMRBudgetItems = (project) => {
+            if (Array.isArray(project?.cmrBudgets) && project.cmrBudgets.length > 0) {
+                return project.cmrBudgets.map((budget, index) => ({
+                    id: budget?.id || `cmr-budget-${index + 1}`,
+                    name: budget?.name || `CMR Contingency ${index + 1}`,
+                    budget: typeof budget?.budget === 'number' ? budget.budget : (parseFloat(budget?.budget) || 0),
+                    status: budget?.status || (project?.isOfcc ? 'pending' : 'approved')
+                }));
+            }
+
+            if (typeof project?.cmrBudget === 'number' || parseFloat(project?.cmrBudget)) {
+                return [{
+                    id: 'legacy-cmr-budget',
+                    name: 'CMR Contingency',
+                    budget: typeof project?.cmrBudget === 'number' ? project.cmrBudget : (parseFloat(project?.cmrBudget) || 0),
+                    status: project?.isOfcc ? 'pending' : 'approved'
+                }];
+            }
+
+            return [];
+        };
+
+        const getTotalCMRBudget = (project) => getCMRBudgetItems(project).reduce((sum, item) => sum + (item.budget || 0), 0);
+
+        const normalizeProjectStructure = (project) => {
+            const normalizedProject = sanitizeProjectNotes(project);
+            normalizedProject.bondPercentage = typeof normalizedProject.bondPercentage === 'number' ? normalizedProject.bondPercentage : 1.5;
+            normalizedProject.feePercentage = typeof normalizedProject.feePercentage === 'number' ? normalizedProject.feePercentage : 10;
+            normalizedProject.isOfcc = typeof normalizedProject.isOfcc === 'boolean' ? normalizedProject.isOfcc : false;
+            normalizedProject.cmrBudget = typeof normalizedProject.cmrBudget === 'number' ? normalizedProject.cmrBudget : (parseFloat(normalizedProject.cmrBudget) || 0);
+            normalizedProject.cmrBudgets = getCMRBudgetItems(normalizedProject);
+            normalizedProject.cmrBudget = getTotalCMRBudget(normalizedProject);
+            const fallbackCMRBudgetId = normalizedProject.cmrBudgets[0]?.id || null;
+            normalizedProject.cmrConsumptions = Array.isArray(normalizedProject.cmrConsumptions) ? normalizedProject.cmrConsumptions.map(consumption => ({
+                ...consumption,
+                cmrBudgetId: consumption.cmrBudgetId || fallbackCMRBudgetId,
+                status: consumption.status || (normalizedProject.isOfcc ? 'pending' : 'approved')
+            })) : [];
+            return normalizedProject;
+        };
+
         const ConstructionCostTracker = () => {
     const LAST_PROJECT_STORAGE_KEY = 'costTrackerLastProjectId';
     const [projects, setProjects] = useState([]);
@@ -404,7 +445,7 @@
         setIsLoading(true);
         try {
             const rawProjects = await window.api.loadProjects();
-            const serverProjects = sanitizeProjectsForStorage(rawProjects);
+            const serverProjects = sanitizeProjectsForStorage(rawProjects).map(normalizeProjectStructure);
 
             if (JSON.stringify(rawProjects) !== JSON.stringify(serverProjects)) {
                 await window.api.saveProjects(serverProjects);
@@ -435,7 +476,7 @@
     const saveProjectsToServer = async (projectsToSave) => {
         setIsSaving(true);
         try {
-            const sanitizedProjects = sanitizeProjectsForStorage(projectsToSave);
+            const sanitizedProjects = sanitizeProjectsForStorage(projectsToSave).map(normalizeProjectStructure);
             await window.api.saveProjects(sanitizedProjects);
         } catch (error) {
             console.error('Failed to save projects:', error);
@@ -447,8 +488,8 @@
 
 
     const updateProject = (updatedProject) => {
-        const sanitizedProject = sanitizeProjectNotes(updatedProject);
-        const newProjects = sanitizeProjectsForStorage(projects.map(p => p.id === sanitizedProject.id ? sanitizedProject : p));
+        const sanitizedProject = normalizeProjectStructure(updatedProject);
+        const newProjects = sanitizeProjectsForStorage(projects.map(p => p.id === sanitizedProject.id ? sanitizedProject : p)).map(normalizeProjectStructure);
         setProjects(newProjects);
         setCurrentProject(sanitizedProject);
         localStorage.setItem(LAST_PROJECT_STORAGE_KEY, updatedProject.id.toString());
@@ -470,6 +511,7 @@
             allowances: [],
             allowanceConsumptions: [],
             cmrBudget: 0,
+            cmrBudgets: [],
             cmrConsumptions: [],
             subcontractorCostNotes: [],
             changeOrderNotes: [],
@@ -479,9 +521,9 @@
             exposureNotes: [],
             changeOrderStatusHistory: []
         };
-        const newProjects = sanitizeProjectsForStorage([...projects, newProject]);
+        const newProjects = sanitizeProjectsForStorage([...projects, newProject]).map(normalizeProjectStructure);
         setProjects(newProjects);
-        setCurrentProject(newProject);
+        setCurrentProject(newProjects.find(project => project.id === newProject.id) || normalizeProjectStructure(newProject));
         localStorage.setItem(LAST_PROJECT_STORAGE_KEY, newProject.id.toString());
         setShowNewProjectModal(false);
         
@@ -540,7 +582,8 @@
                         break;
                     case 'cmr':
                         const cmr = currentProject.cmrConsumptions.find(c => c.id === cost.linkedId);
-                        linkedTo = cmr ? `CMR ${cmr.number} - ${cmr.description}` : 'Unknown CMR';
+                        const budgetItem = currentProject.cmrBudgets?.find(item => item.id === cmr?.cmrBudgetId);
+                        linkedTo = cmr ? `CMR ${cmr.number} - ${budgetItem?.name || cmr.description}` : 'Unknown CMR';
                         break;
                 }
             }
@@ -734,7 +777,7 @@
             'Budget',
             'Total Budget',
             'CMR Contingency Budget',
-            currentProject.cmrBudget,
+            getTotalCMRBudget(currentProject),
             '',
             ''
         ]);
@@ -752,7 +795,7 @@
             'Summary',
             'Remaining',
             'Remaining contingency budget',
-            currentProject.cmrBudget - totalCMRSpent,
+            getTotalCMRBudget(currentProject) - totalCMRSpent,
             '',
             ''
         ]);
@@ -761,6 +804,50 @@
         cmrData.push(['', '', '', '', '', '']);
         
         // Add consumptions
+        const cmrBudgetItems = getCMRBudgetItems(currentProject);
+
+        cmrBudgetItems.forEach((budgetItem) => {
+            const spent = currentProject.cmrConsumptions
+                .filter(consumption => consumption.cmrBudgetId === budgetItem.id)
+                .reduce((sum, consumption) => {
+                    const linkedCosts = currentProject.subcontractorCosts.filter(cost => 
+                        cost.linkedType === 'cmr' && cost.linkedId === consumption.id
+                    );
+                    return sum + linkedCosts.reduce((costSum, cost) => costSum + (cost.amount || 0), 0);
+                }, 0);
+
+            cmrData.push([
+                'Budget',
+                budgetItem.name,
+                'Individual contingency budget',
+                budgetItem.budget,
+                '',
+                ''
+            ]);
+
+            cmrData.push([
+                'Budget Summary',
+                `${budgetItem.name} Spent`,
+                'Amount consumed from contingency',
+                spent,
+                '',
+                ''
+            ]);
+
+            cmrData.push([
+                'Budget Summary',
+                `${budgetItem.name} Remaining`,
+                'Remaining contingency budget',
+                budgetItem.budget - spent,
+                '',
+                ''
+            ]);
+        });
+
+        if (cmrBudgetItems.length > 0) {
+            cmrData.push(['', '', '', '', '', '']);
+        }
+
         currentProject.cmrConsumptions.forEach(consumption => {
             const linkedCosts = currentProject.subcontractorCosts.filter(cost => 
                 cost.linkedType === 'cmr' && cost.linkedId === consumption.id
@@ -768,6 +855,7 @@
             
             const total = linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
             const notes = getNotesText(consumption.id, currentProject.cmrConsumptionNotes);
+            const budgetItem = cmrBudgetItems.find(item => item.id === consumption.cmrBudgetId);
             
             const linkedCostsText = linkedCosts.map(cost => 
                 `${cost.submittedCONumber || cost.contractChangeNumber || 'No Number'} - ${cost.subcontractor} - ${formatCurrency(cost.amount)}`
@@ -776,7 +864,7 @@
             cmrData.push([
                 'Consumption',
                 consumption.number,
-                consumption.description,
+                `${budgetItem?.name ? `${budgetItem.name} - ` : ''}${consumption.description}`,
                 total,
                 notes,
                 linkedCostsText
@@ -826,7 +914,7 @@
                 );
                 return sum + linkedCosts.reduce((costSum, cost) => costSum + (cost.amount || 0), 0);
             }, 0)],
-            ['CMR Budget', currentProject.cmrBudget],
+            ['CMR Budget', getTotalCMRBudget(currentProject)],
             ['CMR Spent', totalCMRSpent]
         ];
         
@@ -882,7 +970,11 @@
                 if (typeof project.bondPercentage !== 'number') project.bondPercentage = 1.5;
                 if (typeof project.feePercentage !== 'number') project.feePercentage = 10;
                 if (typeof project.isOfcc !== 'boolean') project.isOfcc = false;
-                if (typeof project.cmrBudget !== 'number') project.cmrBudget = 0;
+                if (typeof project.cmrBudget !== 'number') project.cmrBudget = parseFloat(project.cmrBudget) || 0;
+                project.cmrBudgets = getCMRBudgetItems(project);
+                project.cmrBudget = getTotalCMRBudget(project);
+
+                const fallbackCMRBudgetId = project.cmrBudgets[0]?.id || null;
 
                 project.allowanceConsumptions = project.allowanceConsumptions.map(consumption => ({
                     ...consumption,
@@ -891,6 +983,7 @@
 
                 project.cmrConsumptions = project.cmrConsumptions.map(consumption => ({
                     ...consumption,
+                    cmrBudgetId: consumption.cmrBudgetId || fallbackCMRBudgetId,
                     status: consumption.status || (project.isOfcc ? 'pending' : 'approved')
                 }));
 
@@ -1458,7 +1551,7 @@ const addSubcontractorCost = (cost) => {
             items.push({
                 type: 'cmr',
                 id: consumption.id,
-                label: `CMR ${consumption.number} - ${consumption.description}`,
+                label: `CMR ${consumption.number} - ${(project.cmrBudgets || []).find(item => item.id === consumption.cmrBudgetId)?.name || consumption.description}`,
                 status: project.isOfcc ? (consumption.status || 'pending') : 'approved'
             });
         });
@@ -3598,7 +3691,8 @@ const ExposureTab = ({ project, updateProject }) => {
         }
         if (cost.linkedType === 'cmr') {
             const consumption = project.cmrConsumptions.find(item => item.id === cost.linkedId);
-            return consumption ? `CMR ${consumption.number} - ${consumption.description}` : 'Unknown CMR';
+            const budgetItem = (project.cmrBudgets || []).find(item => item.id === consumption?.cmrBudgetId);
+            return consumption ? `CMR ${consumption.number} - ${budgetItem?.name || consumption.description}` : 'Unknown CMR';
         }
         return 'No Cost';
     };
@@ -3917,101 +4011,112 @@ const ExposureTab = ({ project, updateProject }) => {
         const CMRContingencyTab = ({ project, updateProject }) => {
             const [showBudgetForm, setShowBudgetForm] = useState(false);
             const [showConsumptionForm, setShowConsumptionForm] = useState(false);
+            const [editingBudget, setEditingBudget] = useState(null);
             const [editingConsumption, setEditingConsumption] = useState(null);
             const [expandedConsumptions, setExpandedConsumptions] = useState(new Set());
             const [cmrNotesModal, setCMRNotesModal] = useState({ isOpen: false, itemId: null, title: '' });
             const [filesModal, setFilesModal] = useState({ isOpen: false, cost: null, files: [] });
             const [loadingFiles, setLoadingFiles] = useState(false);
+            const [filters, setFilters] = useState({ number: '', budgetName: '' });
+            const [sortField, setSortField] = useState('');
+            const [sortDirection, setSortDirection] = useState('asc');
 
-            const updateCMRBudget = (budget) => {
+            const cmrBudgets = getCMRBudgetItems(project);
+
+            const syncProjectCMRBudgets = (nextBudgets, nextConsumptions = project.cmrConsumptions) => {
                 updateProject({
                     ...project,
-                    cmrBudget: budget
+                    cmrBudgets: nextBudgets,
+                    cmrBudget: nextBudgets.reduce((sum, item) => sum + (item.budget || 0), 0),
+                    cmrConsumptions: nextConsumptions
                 });
+            };
+
+            const addBudget = (budgetItem) => {
+                const newBudget = {
+                    ...budgetItem,
+                    id: Date.now(),
+                    status: budgetItem.status || (project.isOfcc ? 'pending' : 'approved')
+                };
+                syncProjectCMRBudgets([...cmrBudgets, newBudget]);
                 setShowBudgetForm(false);
             };
 
-            const addConsumption = (consumption) => {
-    // Don't add the consumption here - it was already added by the form
-    setShowConsumptionForm(false);
-};
+            const updateBudget = (updatedBudget) => {
+                const nextBudgets = cmrBudgets.map(item =>
+                    item.id === updatedBudget.id
+                        ? { ...updatedBudget, status: updatedBudget.status || (project.isOfcc ? 'pending' : 'approved') }
+                        : item
+                );
+                syncProjectCMRBudgets(nextBudgets);
+                setEditingBudget(null);
+            };
 
-const updateConsumption = (updatedConsumption) => {
-    // Don't update the consumption here - it was already updated by the form
-    setEditingConsumption(null);
-};
+            const deleteBudget = (budgetId) => {
+                const nextBudgets = cmrBudgets.filter(item => item.id !== budgetId);
+                const nextConsumptions = project.cmrConsumptions.filter(consumption => consumption.cmrBudgetId !== budgetId);
+                syncProjectCMRBudgets(nextBudgets, nextConsumptions);
+            };
 
-const openFilesModal = async (cost) => {
-        setLoadingFiles(true);
-        setFilesModal({ isOpen: true, cost, files: [] });
-        
-        try {
-            const response = await fetch(`/api/cost-files/${encodeURIComponent(project.name)}/${encodeURIComponent(cost.subcontractor)}/${cost.id}`);
-            if (response.ok) {
-                const data = await response.json();
-                setFilesModal(prev => ({ ...prev, files: data.files || [] }));
-            }
-        } catch (error) {
-            console.error('Error loading files:', error);
-        } finally {
-            setLoadingFiles(false);
-        }
-    };
+            const addConsumption = () => setShowConsumptionForm(false);
+            const updateConsumption = () => setEditingConsumption(null);
 
-    const closeFilesModal = () => {
-        setFilesModal({ isOpen: false, cost: null, files: [] });
-    };
-
-    const handleDeleteFileFromModal = async (file) => {
-        if (!confirm(`Are you sure you want to delete ${file.filename}?`)) return;
-
-        try {
-            const response = await fetch('/api/delete-file', {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    relativePath: file.relativePath
-                })
-            });
-
-            if (response.ok) {
-                setFilesModal(prev => ({
-                    ...prev,
-                    files: prev.files.filter(f => f.filename !== file.filename)
-                }));
-                
-                const updatedCosts = project.subcontractorCosts.map(cost => {
-                    if (cost.id === filesModal.cost.id) {
-                        return {
-                            ...cost,
-                            files: (cost.files || []).filter(f => f.filename !== file.filename)
-                        };
+            const openFilesModal = async (cost) => {
+                setLoadingFiles(true);
+                setFilesModal({ isOpen: true, cost, files: [] });
+                try {
+                    const response = await fetch(`/api/cost-files/${encodeURIComponent(project.name)}/${encodeURIComponent(cost.subcontractor)}/${cost.id}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        setFilesModal(prev => ({ ...prev, files: data.files || [] }));
                     }
-                    return cost;
-                });
-                
-                updateProject({
-                    ...project,
-                    subcontractorCosts: updatedCosts
-                });
-            } else {
-                throw new Error('Delete failed');
-            }
-        } catch (error) {
-            console.error('Delete error:', error);
-            alert('Failed to delete file: ' + error.message);
-        }
-    };
+                } catch (error) {
+                    console.error('Error loading files:', error);
+                } finally {
+                    setLoadingFiles(false);
+                }
+            };
 
-    const formatFileSize = (bytes) => {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    };
+            const closeFilesModal = () => setFilesModal({ isOpen: false, cost: null, files: [] });
+
+            const handleDeleteFileFromModal = async (file) => {
+                if (!confirm(`Are you sure you want to delete ${file.filename}?`)) return;
+
+                try {
+                    const response = await fetch('/api/delete-file', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ relativePath: file.relativePath })
+                    });
+
+                    if (!response.ok) throw new Error('Delete failed');
+
+                    setFilesModal(prev => ({
+                        ...prev,
+                        files: prev.files.filter(f => f.filename !== file.filename)
+                    }));
+
+                    updateProject({
+                        ...project,
+                        subcontractorCosts: project.subcontractorCosts.map(cost =>
+                            cost.id === filesModal.cost.id
+                                ? { ...cost, files: (cost.files || []).filter(f => f.filename !== file.filename) }
+                                : cost
+                        )
+                    });
+                } catch (error) {
+                    console.error('Delete error:', error);
+                    alert('Failed to delete file: ' + error.message);
+                }
+            };
+
+            const formatFileSize = (bytes) => {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            };
 
             const deleteConsumption = (id) => {
                 updateProject({
@@ -4021,204 +4126,243 @@ const openFilesModal = async (cost) => {
             };
 
             const toggleExpanded = (id) => {
-                const newExpanded = new Set(expandedConsumptions);
-                if (newExpanded.has(id)) {
-                    newExpanded.delete(id);
+                const next = new Set(expandedConsumptions);
+                next.has(id) ? next.delete(id) : next.add(id);
+                setExpandedConsumptions(next);
+            };
+
+            const getLinkedCosts = (consumptionId) => project.subcontractorCosts.filter(cost => cost.linkedType === 'cmr' && cost.linkedId === consumptionId);
+            const getConsumptionTotal = (consumptionId) => getLinkedCosts(consumptionId).reduce((sum, cost) => sum + (cost.amount || 0), 0);
+            const getBudgetSpent = (budgetId) => project.cmrConsumptions.filter(c => c.cmrBudgetId === budgetId).reduce((sum, c) => sum + getConsumptionTotal(c.id), 0);
+            const getBudgetById = (budgetId) => cmrBudgets.find(item => item.id === budgetId);
+            const getTotalSpent = () => project.cmrConsumptions.reduce((sum, consumption) => sum + getConsumptionTotal(consumption.id), 0);
+            const hasIncompleteCMRPricing = (consumptionId) => getLinkedCosts(consumptionId).some(cost => !cost.amount);
+
+            const getFilteredAndSortedConsumptions = () => {
+                const filtered = project.cmrConsumptions.filter(consumption => {
+                    const budgetItem = getBudgetById(consumption.cmrBudgetId);
+                    if (filters.number && !consumption.number?.toLowerCase().includes(filters.number.toLowerCase())) return false;
+                    if (filters.budgetName && !budgetItem?.name?.toLowerCase().includes(filters.budgetName.toLowerCase())) return false;
+                    return true;
+                });
+
+                if (!sortField) return filtered;
+
+                return filtered.sort((a, b) => {
+                    let aVal = '';
+                    let bVal = '';
+
+                    if (sortField === 'number') {
+                        aVal = a.number || '';
+                        bVal = b.number || '';
+                    } else if (sortField === 'budgetName') {
+                        aVal = getBudgetById(a.cmrBudgetId)?.name || '';
+                        bVal = getBudgetById(b.cmrBudgetId)?.name || '';
+                    } else if (sortField === 'description') {
+                        aVal = a.description || '';
+                        bVal = b.description || '';
+                    } else if (sortField === 'amount') {
+                        aVal = getConsumptionTotal(a.id);
+                        bVal = getConsumptionTotal(b.id);
+                    }
+
+                    if (sortField === 'amount') {
+                        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+                    }
+
+                    aVal = (aVal || '').toLowerCase();
+                    bVal = (bVal || '').toLowerCase();
+                    if (aVal === bVal) return 0;
+                    return sortDirection === 'asc' ? (aVal > bVal ? 1 : -1) : (aVal < bVal ? 1 : -1);
+                });
+            };
+
+            const handleSort = (field) => {
+                if (sortField === field) {
+                    setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
                 } else {
-                    newExpanded.add(id);
+                    setSortField(field);
+                    setSortDirection('asc');
                 }
-                setExpandedConsumptions(newExpanded);
             };
 
-            const getLinkedCosts = (consumptionId) => {
-                return project.subcontractorCosts.filter(cost => 
-                    cost.linkedType === 'cmr' && cost.linkedId === consumptionId
-                );
-            };
+            const getCMRItemNotes = (itemId) => project.cmrConsumptionNotes?.filter(note => note.itemId === itemId) || [];
+            const addCMRNote = (itemId, content) => updateProject({ ...project, cmrConsumptionNotes: [...(project.cmrConsumptionNotes || []), buildNote(itemId, content, getSavedNoteAuthor())] });
+            const deleteCMRNote = (noteId) => updateProject({ ...project, cmrConsumptionNotes: (project.cmrConsumptionNotes || []).filter(note => note.id !== noteId) });
+            const hasAnyCMRNotes = (consumptionId) => getCMRItemNotes(consumptionId).length > 0 || getLinkedCosts(consumptionId).some(cost => (project.subcontractorCostNotes?.filter(note => note.itemId === cost.id) || []).length > 0);
+            const openCMRNotesModal = (itemId, title) => setCMRNotesModal({ isOpen: true, itemId, title });
+            const closeCMRNotesModal = () => setCMRNotesModal({ isOpen: false, itemId: null, title: '' });
 
-            const getConsumptionTotal = (consumptionId) => {
-                const linkedCosts = getLinkedCosts(consumptionId);
-                return linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
-            };
-
-            const getTotalSpent = () => {
-                return project.cmrConsumptions.reduce((sum, consumption) => 
-                    sum + getConsumptionTotal(consumption.id), 0
-                );
-            };
-
-            const hasIncompleteCMRPricing = (consumptionId) => {
-                const linkedCosts = getLinkedCosts(consumptionId);
-                return linkedCosts.some(cost => !cost.amount);
-            };
-
-            const getCMRItemNotes = (itemId) => {
-                return project.cmrConsumptionNotes?.filter(note => note.itemId === itemId) || [];
-            };
-
-            const addCMRNote = (itemId, content) => {
-                const newNote = buildNote(itemId, content, getSavedNoteAuthor());
-                
-                const updatedNotes = [...(project.cmrConsumptionNotes || []), newNote];
-                updateProject({
-                    ...project,
-                    cmrConsumptionNotes: updatedNotes
-                });
-            };
-
-            const deleteCMRNote = (noteId) => {
-                const updatedNotes = (project.cmrConsumptionNotes || []).filter(note => note.id !== noteId);
-                updateProject({
-                    ...project,
-                    cmrConsumptionNotes: updatedNotes
-                });
-            };
-
-            const hasAnyCMRNotes = (consumptionId) => {
-                // Check if the CMR consumption itself has notes
-                const itemNotes = getCMRItemNotes(consumptionId);
-                if (itemNotes.length > 0) return true;
-    
-                // Check if any linked costs have notes
-                const linkedCosts = getLinkedCosts(consumptionId);
-                for (const cost of linkedCosts) {
-                    const costNotes = project.subcontractorCostNotes?.filter(note => note.itemId === cost.id) || [];
-                    if (costNotes.length > 0) return true;
-                }
-    
-                return false;
-            };
-
-            const openCMRNotesModal = (itemId, title) => {
-                setCMRNotesModal({ isOpen: true, itemId, title });
-            };
-
-            const closeCMRNotesModal = () => {
-                setCMRNotesModal({ isOpen: false, itemId: null, title: '' });
-            };
-
-            const remaining = project.cmrBudget - getTotalSpent();
+            const totalBudget = cmrBudgets.reduce((sum, item) => sum + (item.budget || 0), 0);
+            const totalSpent = getTotalSpent();
+            const remaining = totalBudget - totalSpent;
+            const filteredConsumptions = getFilteredAndSortedConsumptions();
 
             return React.createElement('div', {className: "space-y-6"},
                 React.createElement('div', {className: "flex justify-between items-center"},
                     React.createElement('h2', {className: "text-xl font-semibold"}, "CMR Contingency"),
                     React.createElement('div', {className: "space-x-2"},
                         React.createElement('button', {
-                            onClick: () => setShowBudgetForm(true),
+                            onClick: () => { setEditingBudget(null); setShowBudgetForm(true); },
                             className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                        }, "Set Budget"),
+                        }, "Add Contingency Budget"),
                         React.createElement('button', {
                             onClick: () => setShowConsumptionForm(true),
-                            className: "px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                            disabled: cmrBudgets.length === 0,
+                            className: `px-4 py-2 text-white rounded-md ${cmrBudgets.length === 0 ? 'bg-green-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`
                         }, "Add Consumption")
                     )
                 ),
 
-                // Budget Summary
                 React.createElement('div', {className: "bg-white rounded-lg shadow p-6"},
-                    React.createElement('h3', {className: "font-medium text-gray-900 mb-4"}, "Budget Summary"),
+                    React.createElement('h3', {className: "font-medium text-gray-900 mb-4"}, "CMR Contingency Summary"),
                     React.createElement('div', {className: "grid grid-cols-4 gap-6"},
                         React.createElement('div', null,
                             React.createElement('div', {className: "text-sm text-gray-500"}, "Total Budget"),
-                            React.createElement('div', {className: "text-2xl font-bold text-gray-900"}, `${project.cmrBudget.toLocaleString()}`)
+                            React.createElement('div', {className: "text-2xl font-bold text-gray-900"}, `$${totalBudget.toLocaleString()}`)
                         ),
                         React.createElement('div', null,
                             React.createElement('div', {className: "text-sm text-gray-500"}, "Total Spent"),
-                            React.createElement('div', {className: "text-2xl font-bold text-gray-900"}, `${getTotalSpent().toLocaleString()}`)
+                            React.createElement('div', {className: "text-2xl font-bold text-blue-600"}, `$${totalSpent.toLocaleString()}`)
                         ),
                         React.createElement('div', null,
-                            React.createElement('div', {className: "text-sm text-gray-500"}, "Remaining"),
+                            React.createElement('div', {className: "text-sm text-gray-500"}, "Total Remaining"),
+                            React.createElement('div', {className: `text-2xl font-bold ${remaining < 0 ? 'text-red-600' : 'text-green-600'}`}, `$${remaining.toLocaleString()}`)
+                        ),
+                        React.createElement('div', null,
+                            React.createElement('div', {className: "text-sm text-gray-500"}, "Budget Used"),
+                            React.createElement('div', {className: "text-2xl font-bold text-purple-600"}, totalBudget > 0 ? `${((totalSpent / totalBudget) * 100).toFixed(1)}%` : '0%')
+                        )
+                    ),
+                    totalBudget > 0 && React.createElement('div', {className: "mt-4"},
+                        React.createElement('div', {className: "text-xs text-gray-500 mb-1"}, "Budget Usage Progress"),
+                        React.createElement('div', {className: "w-full bg-gray-200 rounded-full h-2"},
                             React.createElement('div', {
-                                className: `text-2xl font-bold ${remaining < 0 ? 'text-red-600' : 'text-gray-900'}`
-                            }, `${remaining.toLocaleString()}`)
-                        ),
-                        React.createElement('div', null,
-                            React.createElement('div', {className: "text-sm text-gray-500"}, "Actions"),
-                            React.createElement('div', {className: "flex space-x-2 mt-2"},
-                                React.createElement('button', {
-                                    onClick: () => setShowBudgetForm(true),
-                                    className: "px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-                                }, "Edit Budget")
-                            )
+                                className: `h-2 rounded-full transition-all duration-300 ${totalSpent > totalBudget ? 'bg-red-500' : 'bg-blue-500'}`,
+                                style: { width: `${Math.min(100, (totalSpent / totalBudget) * 100)}%` }
+                            })
                         )
                     )
                 ),
 
-                // Consumption Items
                 React.createElement('div', {className: "bg-white rounded-lg shadow overflow-hidden"},
                     React.createElement('div', {className: "px-6 py-4 border-b"},
-                        React.createElement('h3', {className: "font-medium text-gray-900"}, "CMR Consumptions")
+                        React.createElement('h3', {className: "font-medium text-gray-900"}, "Individual Contingency Budgets")
                     ),
                     React.createElement('table', {className: "min-w-full divide-y divide-gray-200"},
                         React.createElement('thead', {className: "bg-gray-50"},
                             React.createElement('tr', null,
-                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Number"),
-                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Description"),
-                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Amount"),
+                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Contingency"),
+                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Budget"),
+                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Spent"),
+                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Remaining"),
                                 project.isOfcc && React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Status"),
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Actions")
                             )
                         ),
                         React.createElement('tbody', {className: "bg-white divide-y divide-gray-200"},
-                            project.cmrConsumptions.map(consumption => {
+                            cmrBudgets.length === 0 ? React.createElement('tr', null,
+                                React.createElement('td', {colSpan: project.isOfcc ? 6 : 5, className: "px-6 py-6 text-sm text-gray-500 text-center"}, "Add a contingency budget to begin tracking multiple CMR contingencies.")
+                            ) : cmrBudgets.map(budgetItem => {
+                                const spent = getBudgetSpent(budgetItem.id);
+                                const budgetRemaining = budgetItem.budget - spent;
+                                return React.createElement('tr', {key: budgetItem.id},
+                                    React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"}, budgetItem.name),
+                                    React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, `$${budgetItem.budget.toLocaleString()}`),
+                                    React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, `$${spent.toLocaleString()}`),
+                                    React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm"},
+                                        React.createElement('span', {className: budgetRemaining < 0 ? 'text-red-600 font-medium' : 'text-gray-900'}, `$${budgetRemaining.toLocaleString()}`)
+                                    ),
+                                    project.isOfcc && React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"},
+                                        React.createElement('span', {className: budgetItem.status === 'approved' ? 'text-green-700 font-medium' : budgetItem.status === 'submitted' ? 'text-blue-700 font-medium' : 'text-amber-700 font-medium'}, getApprovalStatusLabel(budgetItem.status || 'pending'))
+                                    ),
+                                    React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2"},
+                                        React.createElement('button', { onClick: () => setEditingBudget(budgetItem), className: "text-blue-600 hover:text-blue-900" }, React.createElement(Edit)),
+                                        React.createElement('button', { onClick: () => deleteBudget(budgetItem.id), className: "text-red-600 hover:text-red-900" }, React.createElement(Trash2))
+                                    )
+                                );
+                            })
+                        )
+                    )
+                ),
+
+                React.createElement('div', {className: "bg-white rounded-lg shadow overflow-hidden"},
+                    React.createElement('div', {className: "px-6 py-4 border-b"},
+                        React.createElement('h3', {className: "font-medium text-gray-900"}, "CMR Contingency Consumptions")
+                    ),
+                    React.createElement('div', {className: "px-6 py-4 border-b bg-gray-50"},
+                        React.createElement('h4', {className: "text-sm font-medium text-gray-700 mb-3"}, "Filters"),
+                        React.createElement('div', {className: "grid grid-cols-2 gap-4"},
+                            React.createElement('div', null,
+                                React.createElement('label', {className: "block text-xs text-gray-500 mb-1"}, "Number"),
+                                React.createElement('input', {
+                                    type: "text",
+                                    value: filters.number,
+                                    onChange: (e) => setFilters({...filters, number: e.target.value}),
+                                    className: "w-full px-2 py-1 text-sm border border-gray-300 rounded",
+                                    placeholder: "Filter by number..."
+                                })
+                            ),
+                            React.createElement('div', null,
+                                React.createElement('label', {className: "block text-xs text-gray-500 mb-1"}, "Contingency Name"),
+                                React.createElement('input', {
+                                    type: "text",
+                                    value: filters.budgetName,
+                                    onChange: (e) => setFilters({...filters, budgetName: e.target.value}),
+                                    className: "w-full px-2 py-1 text-sm border border-gray-300 rounded",
+                                    placeholder: "Filter by contingency name..."
+                                })
+                            )
+                        )
+                    ),
+                    React.createElement('table', {className: "min-w-full divide-y divide-gray-200"},
+                        React.createElement('thead', {className: "bg-gray-50"},
+                            React.createElement('tr', null,
+                                React.createElement('th', { className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100", onClick: () => handleSort('number') }, "Number", sortField === 'number' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                                React.createElement('th', { className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100", onClick: () => handleSort('budgetName') }, "Contingency", sortField === 'budgetName' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                                React.createElement('th', { className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100", onClick: () => handleSort('description') }, "Description", sortField === 'description' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                                React.createElement('th', { className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100", onClick: () => handleSort('amount') }, "Amount", sortField === 'amount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                                project.isOfcc && React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Status"),
+                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Actions")
+                            )
+                        ),
+                        React.createElement('tbody', {className: "bg-white divide-y divide-gray-200"},
+                            filteredConsumptions.map(consumption => {
                                 const linkedCosts = getLinkedCosts(consumption.id);
                                 const total = getConsumptionTotal(consumption.id);
                                 const isExpanded = expandedConsumptions.has(consumption.id);
-
+                                const budgetItem = getBudgetById(consumption.cmrBudgetId);
                                 return [
                                     React.createElement('tr', {key: consumption.id},
                                         React.createElement('td', {className: "px-6 py-4 whitespace-nowrap"},
                                             React.createElement('button', {
                                                 onClick: () => toggleExpanded(consumption.id),
                                                 className: "flex items-center space-x-2 text-sm font-medium text-gray-900"
-                                            }, isExpanded ? React.createElement(ChevronDown) : React.createElement(ChevronRight),
-                                            React.createElement('span', null, consumption.number),
-                                            hasIncompleteCMRPricing(consumption.id) && React.createElement('span', {className: "text-red-500 font-bold ml-2"}, "!")
-                                            )
+                                            }, isExpanded ? React.createElement(ChevronDown) : React.createElement(ChevronRight), React.createElement('span', null, consumption.number), hasIncompleteCMRPricing(consumption.id) && React.createElement('span', {className: "text-red-500 font-bold ml-2"}, "!"))
                                         ),
+                                        React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, budgetItem?.name || 'Unassigned'),
                                         React.createElement('td', {className: "px-6 py-4 text-sm text-gray-900"}, consumption.description),
-                                        React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"}, `${total.toLocaleString()}`),
+                                        React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"}, `$${total.toLocaleString()}`),
                                         project.isOfcc && React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, getApprovalStatusLabel(consumption.status || 'pending')),
                                         React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2"},
-                                            React.createElement('button', {
-                                                onClick: () => openCMRNotesModal(consumption.id, `CMR ${consumption.number} - ${consumption.description}`),
-                                                className: `p-1 rounded ${hasAnyCMRNotes(consumption.id) ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900`
-                                            }, React.createElement(MessageSquare)),
-                                            React.createElement('button', {
-                                                onClick: () => setEditingConsumption(consumption),
-                                                className: "text-blue-600 hover:text-blue-900"
-                                            }, React.createElement(Edit)),
-                                            React.createElement('button', {
-                                                onClick: () => deleteConsumption(consumption.id),
-                                                className: "text-red-600 hover:text-red-900"
-                                            }, React.createElement(Trash2))
+                                            React.createElement('button', { onClick: () => openCMRNotesModal(consumption.id, `${consumption.number} - ${budgetItem?.name || 'CMR Contingency'}`), className: `p-1 rounded ${hasAnyCMRNotes(consumption.id) ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900` }, React.createElement(MessageSquare)),
+                                            React.createElement('button', { onClick: () => setEditingConsumption(consumption), className: "text-blue-600 hover:text-blue-900" }, React.createElement(Edit)),
+                                            React.createElement('button', { onClick: () => deleteConsumption(consumption.id), className: "text-red-600 hover:text-red-900" }, React.createElement(Trash2))
                                         )
                                     ),
                                     isExpanded && linkedCosts.length > 0 && React.createElement('tr', {key: `${consumption.id}-details`},
-                                        React.createElement('td', {colSpan: project.isOfcc ? "5" : "4", className: "px-6 py-4 bg-gray-50"},
+                                        React.createElement('td', {colSpan: project.isOfcc ? "6" : "5", className: "px-6 py-4 bg-gray-50"},
                                             React.createElement('div', {className: "space-y-2"},
                                                 React.createElement('h4', {className: "font-medium text-gray-900"}, "Linked Subcontractor Costs:"),
-...linkedCosts.map(cost => 
-    React.createElement('div', {key: cost.id, className: "flex justify-between items-center text-sm text-gray-600 pl-4"},
-        React.createElement('div', {className: "flex-1"},
-            React.createElement('span', null, `${cost.submittedCONumber || cost.contractChangeNumber || 'No Number'} - ${cost.subcontractor} - ${cost.description}`)
-        ),
-        React.createElement('div', {className: "flex items-center space-x-3"},
-            React.createElement('span', null, cost.amount ? `$${cost.amount.toLocaleString()}` : 'Pending'),
-            cost.files && cost.files.length > 0 ? 
-                React.createElement('button', {
-                    onClick: () => openFilesModal(cost),
-                    className: "inline-flex items-center px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200"
-                }, `${cost.files.length} file${cost.files.length === 1 ? '' : 's'}`) :
-                React.createElement('span', {className: "text-xs text-gray-400"}, "No files")
-        )
-    )
-),
-                                                React.createElement('div', {className: "border-t pt-2 mt-2"},
-                                                    React.createElement('div', {className: "flex justify-between font-medium text-gray-900 pl-4"},
-                                                        React.createElement('span', null, "Total:"),
-                                                        React.createElement('span', null, `${total.toLocaleString()}`)
+                                                ...linkedCosts.map(cost => React.createElement('div', {key: cost.id, className: "flex justify-between items-center text-sm text-gray-600 pl-4"},
+                                                    React.createElement('div', {className: "flex-1"}, React.createElement('span', null, `${cost.submittedCONumber || cost.contractChangeNumber || 'No Number'} - ${cost.subcontractor} - ${cost.description}`)),
+                                                    React.createElement('div', {className: "flex items-center space-x-3"},
+                                                        React.createElement('span', null, cost.amount ? `$${cost.amount.toLocaleString()}` : 'Pending'),
+                                                        cost.files && cost.files.length > 0 ? React.createElement('button', { onClick: () => openFilesModal(cost), className: "inline-flex items-center px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200" }, `${cost.files.length} file${cost.files.length === 1 ? '' : 's'}`) : React.createElement('span', {className: "text-xs text-gray-400"}, "No files")
                                                     )
+                                                )),
+                                                React.createElement('div', {className: "border-t pt-2 mt-2"},
+                                                    React.createElement('div', {className: "flex justify-between font-medium text-gray-900 pl-4"}, React.createElement('span', null, "Total:"), React.createElement('span', null, `$${total.toLocaleString()}`))
                                                 )
                                             )
                                         )
@@ -4231,55 +4375,66 @@ const openFilesModal = async (cost) => {
 
                 showBudgetForm && React.createElement(Modal, {
                     onClose: () => setShowBudgetForm(false),
-                    title: "Set CMR Budget"
+                    title: "Add CMR Contingency Budget"
                 }, React.createElement(CMRBudgetForm, {
-                    currentBudget: project.cmrBudget,
-                    onSubmit: updateCMRBudget,
-                    onCancel: () => setShowBudgetForm(false)
+                    onSubmit: addBudget,
+                    onCancel: () => setShowBudgetForm(false),
+                    isOfcc: project.isOfcc
                 })),
 
-showConsumptionForm && React.createElement(Modal, {
-    onClose: () => setShowConsumptionForm(false),
-    title: "Add CMR Consumption"
-}, React.createElement(CMRConsumptionForm, {
-    onSubmit: addConsumption,
-    onCancel: () => setShowConsumptionForm(false),
-    project: project,
-    updateProject: updateProject
-})),
+                editingBudget && React.createElement(Modal, {
+                    onClose: () => setEditingBudget(null),
+                    title: "Edit CMR Contingency Budget"
+                }, React.createElement(CMRBudgetForm, {
+                    budgetItem: editingBudget,
+                    onSubmit: updateBudget,
+                    onCancel: () => setEditingBudget(null),
+                    isOfcc: project.isOfcc
+                })),
 
-editingConsumption && React.createElement(Modal, {
-    onClose: () => setEditingConsumption(null),
-    title: "Edit CMR Consumption"
-}, React.createElement(CMRConsumptionForm, {
-    consumption: editingConsumption,
-    onSubmit: updateConsumption,
-    onCancel: () => setEditingConsumption(null),
-    project: project,
-    updateProject: updateProject
-})),
+                showConsumptionForm && React.createElement(Modal, {
+                    onClose: () => setShowConsumptionForm(false),
+                    title: "Add CMR Consumption"
+                }, React.createElement(CMRConsumptionForm, {
+                    budgets: cmrBudgets,
+                    onSubmit: addConsumption,
+                    onCancel: () => setShowConsumptionForm(false),
+                    project: project,
+                    updateProject: updateProject
+                })),
 
-React.createElement(NotesModal, {
-    isOpen: cmrNotesModal.isOpen,
-    onClose: closeCMRNotesModal,
-    title: cmrNotesModal.title,
-    notes: cmrNotesModal.itemId ? getCMRItemNotes(cmrNotesModal.itemId) : [],
-    onAddNote: (content) => addCMRNote(cmrNotesModal.itemId, content),
-    onDeleteNote: deleteCMRNote,
-    // New props for linked costs
-    project: project,
-    linkedCosts: cmrNotesModal.itemId ? getLinkedCosts(cmrNotesModal.itemId) : [],
-    linkType: 'cmr'
-}),
-React.createElement(FilesModal, {
-    isOpen: filesModal.isOpen,
-    onClose: closeFilesModal,
-    cost: filesModal.cost,
-    files: filesModal.files,
-    loading: loadingFiles,
-    onDeleteFile: handleDeleteFileFromModal,
-    formatFileSize: formatFileSize
-})
+                editingConsumption && React.createElement(Modal, {
+                    onClose: () => setEditingConsumption(null),
+                    title: "Edit CMR Consumption"
+                }, React.createElement(CMRConsumptionForm, {
+                    budgets: cmrBudgets,
+                    consumption: editingConsumption,
+                    onSubmit: updateConsumption,
+                    onCancel: () => setEditingConsumption(null),
+                    project: project,
+                    updateProject: updateProject
+                })),
+
+                React.createElement(NotesModal, {
+                    isOpen: cmrNotesModal.isOpen,
+                    onClose: closeCMRNotesModal,
+                    title: cmrNotesModal.title,
+                    notes: cmrNotesModal.itemId ? getCMRItemNotes(cmrNotesModal.itemId) : [],
+                    onAddNote: (content) => addCMRNote(cmrNotesModal.itemId, content),
+                    onDeleteNote: deleteCMRNote,
+                    project: project,
+                    linkedCosts: cmrNotesModal.itemId ? getLinkedCosts(cmrNotesModal.itemId) : [],
+                    linkType: 'cmr'
+                }),
+                React.createElement(FilesModal, {
+                    isOpen: filesModal.isOpen,
+                    onClose: closeFilesModal,
+                    cost: filesModal.cost,
+                    files: filesModal.files,
+                    loading: loadingFiles,
+                    onDeleteFile: handleDeleteFileFromModal,
+                    formatFileSize: formatFileSize
+                })
             );
         };
 
@@ -4323,7 +4478,8 @@ const CostLinkingSection = ({
                 return 'Unknown Allowance';
             case 'cmr':
                 const cmr = project.cmrConsumptions.find(c => c.id === cost.linkedId);
-                return cmr ? `CMR ${cmr.number} - ${cmr.description?.substring(0, 30)}...` : 'Unknown CMR';
+                const budgetItem = (project.cmrBudgets || []).find(item => item.id === cmr?.cmrBudgetId);
+                return cmr ? `CMR ${cmr.number} - ${(budgetItem?.name || cmr.description || '').substring(0, 30)}...` : 'Unknown CMR';
             default:
                 return 'Unknown Link';
         }
@@ -5078,7 +5234,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
             items.push({
                 type: 'cmr',
                 id: consumption.id,
-                label: `CMR ${consumption.number} - ${consumption.description}`,
+                label: `CMR ${consumption.number} - ${(project.cmrBudgets || []).find(item => item.id === consumption.cmrBudgetId)?.name || consumption.description}`,
                 status: project.isOfcc ? (consumption.status || 'pending') : 'approved'
             });
         });
@@ -5507,147 +5663,159 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
         )
     );
 };
-        const CMRBudgetForm = ({ currentBudget, onSubmit, onCancel }) => {
-            const [budget, setBudget] = useState(currentBudget.toString());
+        const CMRBudgetForm = ({ budgetItem, onSubmit, onCancel, isOfcc }) => {
+            const [formData, setFormData] = useState({
+                name: budgetItem?.name || '',
+                budget: budgetItem?.budget?.toString() || '',
+                status: budgetItem?.status || (isOfcc ? 'pending' : 'approved')
+            });
 
             const handleSubmit = (e) => {
                 e.preventDefault();
-                onSubmit(parseFloat(budget) || 0);
+                onSubmit({
+                    ...budgetItem,
+                    name: formData.name.trim(),
+                    budget: parseFloat(formData.budget) || 0,
+                    status: formData.status || (isOfcc ? 'pending' : 'approved')
+                });
             };
 
             return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Contingency Name"),
+                    React.createElement('input', {
+                        type: "text",
+                        value: formData.name,
+                        onChange: (e) => setFormData({...formData, name: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                        placeholder: "e.g., Building A Contingency",
+                        required: true
+                    })
+                ),
                 React.createElement('div', null,
                     React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "CMR Contingency Budget"),
                     React.createElement('input', {
                         type: "number",
                         step: "0.01",
-                        value: budget,
-                        onChange: (e) => setBudget(e.target.value),
+                        value: formData.budget,
+                        onChange: (e) => setFormData({...formData, budget: e.target.value}),
                         className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
                         required: true
                     })
                 ),
-
+                isOfcc && React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Status"),
+                    React.createElement('select', {
+                        value: formData.status || 'pending',
+                        onChange: (e) => setFormData({...formData, status: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                    }, ...APPROVAL_STATUS_OPTIONS.map(option => React.createElement('option', {key: option.value, value: option.value}, option.label)))
+                ),
                 React.createElement('div', {className: "flex justify-end space-x-3"},
                     React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
-                    React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, "Update Budget")
+                    React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, budgetItem ? 'Update Budget' : 'Add Budget')
                 )
             );
         };
 
-        const CMRConsumptionForm = ({ consumption, onSubmit, onCancel, project, updateProject }) => {
-    const [formData, setFormData] = useState({
-        number: consumption?.number || '',
-        description: consumption?.description || '',
-        status: consumption?.status || (project.isOfcc ? 'pending' : 'approved'),
-        ...consumption
-    });
+        const CMRConsumptionForm = ({ budgets, consumption, onSubmit, onCancel, project, updateProject }) => {
+            const availableBudgets = budgets || [];
+            const [formData, setFormData] = useState({
+                number: consumption?.number || '',
+                description: consumption?.description || '',
+                cmrBudgetId: consumption?.cmrBudgetId || availableBudgets[0]?.id || '',
+                status: consumption?.status || (project.isOfcc ? 'pending' : 'approved'),
+                ...consumption
+            });
 
-    // Get initially linked costs for editing
-    const getLinkedCosts = () => {
-        if (!consumption) return [];
-        return project.subcontractorCosts.filter(cost => 
-            cost.linkedType === 'cmr' && cost.linkedId === consumption.id
-        );
-    };
+            const getLinkedCosts = () => {
+                if (!consumption) return [];
+                return project.subcontractorCosts.filter(cost => cost.linkedType === 'cmr' && cost.linkedId === consumption.id);
+            };
 
-    const [linkedCosts, setLinkedCosts] = useState(getLinkedCosts());
+            const [linkedCosts, setLinkedCosts] = useState(getLinkedCosts());
 
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        
-        // Create the consumption first
-        const consumptionId = consumption?.id || Date.now();
-        const newOrUpdatedConsumption = { ...formData, id: consumptionId };
-        
-        // Update all subcontractor costs based on selections
-        const updatedCosts = project.subcontractorCosts.map(cost => {
-            const isSelected = linkedCosts.find(lc => lc.id === cost.id);
-            
-            if (isSelected) {
-                // Link this cost to the current consumption
-                return { ...cost, linkedType: 'cmr', linkedId: consumptionId };
-            } else if (cost.linkedType === 'cmr' && cost.linkedId === consumptionId) {
-                // Unlink costs that were previously linked to this consumption but are no longer selected
-                return { ...cost, linkedType: '', linkedId: '' };
-            }
-            return cost;
-        });
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const consumptionId = consumption?.id || Date.now();
+                const newOrUpdatedConsumption = { ...formData, id: consumptionId, cmrBudgetId: formData.cmrBudgetId };
 
-        // Add any new costs that were created in the linking section
-        const existingCostIds = project.subcontractorCosts.map(c => c.id);
-        const newCosts = linkedCosts
-            .filter(cost => !existingCostIds.includes(cost.id))
-            .map(cost => ({
-                ...cost,
-                linkedType: 'cmr',
-                linkedId: consumptionId
-            }));
+                const updatedCosts = project.subcontractorCosts.map(cost => {
+                    const isSelected = linkedCosts.find(lc => lc.id === cost.id);
+                    if (isSelected) return { ...cost, linkedType: 'cmr', linkedId: consumptionId };
+                    if (cost.linkedType === 'cmr' && cost.linkedId === consumptionId) return { ...cost, linkedType: '', linkedId: '' };
+                    return cost;
+                });
 
-        // Update the project with the new/updated consumption and costs
-        const updatedProject = {
-            ...project,
-            cmrConsumptions: consumption ? 
-                project.cmrConsumptions.map(c => c.id === consumption.id ? newOrUpdatedConsumption : c) :
-                [...project.cmrConsumptions, newOrUpdatedConsumption],
-            subcontractorCosts: [...updatedCosts, ...newCosts]
+                const existingCostIds = project.subcontractorCosts.map(c => c.id);
+                const newCosts = linkedCosts.filter(cost => !existingCostIds.includes(cost.id)).map(cost => ({ ...cost, linkedType: 'cmr', linkedId: consumptionId }));
+
+                updateProject({
+                    ...project,
+                    cmrConsumptions: consumption
+                        ? project.cmrConsumptions.map(c => c.id === consumption.id ? newOrUpdatedConsumption : c)
+                        : [...project.cmrConsumptions, newOrUpdatedConsumption],
+                    subcontractorCosts: [...updatedCosts, ...newCosts]
+                });
+                onSubmit(newOrUpdatedConsumption);
+            };
+
+            return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Consumption Number"),
+                    React.createElement('input', {
+                        type: "text",
+                        value: formData.number,
+                        onChange: (e) => setFormData({...formData, number: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                        placeholder: "e.g., CMR001",
+                        required: true
+                    })
+                ),
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Contingency Budget"),
+                    React.createElement('select', {
+                        value: formData.cmrBudgetId,
+                        onChange: (e) => setFormData({...formData, cmrBudgetId: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                        required: true
+                    },
+                        React.createElement('option', {value: ""}, "Select Contingency Budget"),
+                        ...availableBudgets.map(budget => React.createElement('option', {key: budget.id, value: budget.id}, budget.name))
+                    )
+                ),
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Description"),
+                    React.createElement('textarea', {
+                        value: formData.description,
+                        onChange: (e) => setFormData({...formData, description: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                        rows: "3",
+                        required: true
+                    })
+                ),
+                project.isOfcc && React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Status"),
+                    React.createElement('select', {
+                        value: formData.status || 'pending',
+                        onChange: (e) => setFormData({...formData, status: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                    }, ...APPROVAL_STATUS_OPTIONS.map(option => React.createElement('option', {key: option.value, value: option.value}, option.label)))
+                ),
+                React.createElement(CostLinkingSection, {
+                    project: project,
+                    linkType: 'cmr',
+                    linkId: consumption?.id,
+                    linkedCosts: linkedCosts,
+                    onCostsChange: setLinkedCosts,
+                    updateProject: updateProject
+                }),
+                React.createElement('div', {className: "flex justify-end space-x-3"},
+                    React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
+                    React.createElement('button', {type: "submit", disabled: !availableBudgets.length, className: `px-4 py-2 text-white rounded-md ${!availableBudgets.length ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}, consumption ? 'Update Consumption' : 'Add Consumption')
+                )
+            );
         };
-        
-        updateProject(updatedProject);
-        onSubmit(newOrUpdatedConsumption);
-    };
-
-    return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
-        React.createElement('div', null,
-            React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Consumption Number"),
-            React.createElement('input', {
-                type: "text",
-                value: formData.number,
-                onChange: (e) => setFormData({...formData, number: e.target.value}),
-                className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
-                placeholder: "e.g., CMR001",
-                required: true
-            })
-        ),
-
-        React.createElement('div', null,
-            React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Description"),
-            React.createElement('textarea', {
-                value: formData.description,
-                onChange: (e) => setFormData({...formData, description: e.target.value}),
-                className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
-                rows: "3",
-                required: true
-            })
-        ),
-
-        project.isOfcc && React.createElement('div', null,
-            React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Status"),
-            React.createElement('select', {
-                value: formData.status || 'pending',
-                onChange: (e) => setFormData({...formData, status: e.target.value}),
-                className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
-            },
-                ...APPROVAL_STATUS_OPTIONS.map(option => React.createElement('option', {key: option.value, value: option.value}, option.label))
-            )
-        ),
-
-        // Cost Linking Section
-        React.createElement(CostLinkingSection, {
-            project: project,
-            linkType: 'cmr',
-            linkId: consumption?.id,
-            linkedCosts: linkedCosts,
-            onCostsChange: setLinkedCosts,
-            updateProject: updateProject
-        }),
-
-        React.createElement('div', {className: "flex justify-end space-x-3"},
-            React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
-            React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, consumption ? 'Update' : 'Add', " Consumption")
-        )
-    );
-};
 
         const NewProjectForm = ({ onSubmit, onCancel }) => {
             const [name, setName] = useState('');
