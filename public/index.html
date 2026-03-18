@@ -353,6 +353,10 @@
     const [showImportModal, setShowImportModal] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [noteAuthorName, setNoteAuthorName] = useState(() => {
+        if (typeof window === 'undefined') return '';
+        return localStorage.getItem(NOTE_AUTHOR_STORAGE_KEY) || getDefaultNoteAuthor();
+    });
 
     const calculateCostBreakdown = (project, subAmount) => {
         const feePercentage = project?.feePercentage || 0;
@@ -494,7 +498,7 @@
         // Helper function to get notes for an item
         const getNotesText = (itemId, notesArray) => {
             const notes = (notesArray || []).filter(note => note.itemId === itemId);
-            return notes.map(note => `${new Date(note.timestamp).toLocaleDateString()}: ${note.content}`).join('\n');
+            return notes.map(note => `${new Date(note.timestamp).toLocaleDateString()} - ${formatNoteAuthor(note)}: ${note.content}`).join('\n');
         };
         
         // 1. SUBCONTRACTOR COSTS SHEET
@@ -1062,7 +1066,9 @@
         }, React.createElement(ProjectSettings, {
             project: currentProject,
             updateProject: updateProject,
-            onClose: () => setShowSettingsModal(false)
+            onClose: () => setShowSettingsModal(false),
+            noteAuthorName,
+            setNoteAuthorName
         })),
 
         showImportModal && React.createElement(Modal, {
@@ -1158,7 +1164,7 @@ const NotesModal = ({
                                         React.createElement('div', { className: "flex-1" },
                                             React.createElement('p', { className: "text-gray-900 mb-2" }, note.content),
                                             React.createElement('p', { className: "text-sm text-gray-500" }, 
-                                                new Date(note.timestamp).toLocaleString()
+                                                formatNoteMeta(note)
                                             )
                                         ),
                                         React.createElement('button', {
@@ -1177,7 +1183,7 @@ const NotesModal = ({
                                 onChange: (e) => setNewNote(e.target.value),
                                 className: "w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500",
                                 rows: 3,
-                                placeholder: "Enter your note here..."
+                                placeholder: "Enter your note here... Your saved author tag will be added automatically."
                             })
                         ),
                         React.createElement('div', { className: "flex justify-end space-x-3" },
@@ -1227,7 +1233,7 @@ const NotesModal = ({
                                                 },
                                                     React.createElement('p', { className: "text-gray-900 text-sm mb-1" }, note.content),
                                                     React.createElement('p', { className: "text-xs text-gray-500" }, 
-                                                        new Date(note.timestamp).toLocaleString()
+                                                        formatNoteMeta(note)
                                                     )
                                                 )
                                             )
@@ -1518,12 +1524,7 @@ const addSubcontractorCost = (cost) => {
     };
 
     const addNote = (itemId, content) => {
-        const newNote = {
-            id: Date.now(),
-            itemId: itemId,
-            content: content,
-            timestamp: new Date().toISOString()
-        };
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
         
         const updatedNotes = [...(project.subcontractorCostNotes || []), newNote];
         updateProject({
@@ -2366,12 +2367,7 @@ const handleGeneratePDF = async (changeOrder) => {
             };
 
             const addCONote = (itemId, content) => {
-                const newNote = {
-                    id: Date.now(),
-                    itemId: itemId,
-                    content: content,
-                    timestamp: new Date().toISOString()
-                };
+                const newNote = buildNote(itemId, content, getSavedNoteAuthor());
                 
                 const updatedNotes = [...(project.changeOrderNotes || []), newNote];
                 updateProject({
@@ -3045,12 +3041,7 @@ const AllowancesTab = ({ project, updateProject }) => {
     };
 
     const addAllowanceNote = (itemId, content) => {
-        const newNote = {
-            id: Date.now(),
-            itemId: itemId,
-            content: content,
-            timestamp: new Date().toISOString()
-        };
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
         
         const updatedNotes = [...(project.allowanceNotes || []), newNote];
         updateProject({
@@ -3080,12 +3071,7 @@ const AllowancesTab = ({ project, updateProject }) => {
     };
 
     const addConsumptionNote = (itemId, content) => {
-        const newNote = {
-            id: Date.now(),
-            itemId: itemId,
-            content: content,
-            timestamp: new Date().toISOString()
-        };
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
         
         const updatedNotes = [...(project.allowanceConsumptionNotes || []), newNote];
         updateProject({
@@ -3705,12 +3691,7 @@ const ExposureTab = ({ project, updateProject }) => {
     };
 
     const addExposureNote = (itemId, content) => {
-        const newNote = {
-            id: Date.now(),
-            itemId,
-            content,
-            timestamp: new Date().toISOString()
-        };
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
 
         updateProject({
             ...project,
@@ -4063,12 +4044,7 @@ const openFilesModal = async (cost) => {
             };
 
             const addCMRNote = (itemId, content) => {
-                const newNote = {
-                    id: Date.now(),
-                    itemId: itemId,
-                    content: content,
-                    timestamp: new Date().toISOString()
-                };
+                const newNote = buildNote(itemId, content, getSavedNoteAuthor());
                 
                 const updatedNotes = [...(project.cmrConsumptionNotes || []), newNote];
                 updateProject({
@@ -5687,7 +5663,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             );
         };
 
-        const ProjectSettings = ({ project, updateProject, onClose }) => {
+        const ProjectSettings = ({ project, updateProject, onClose, noteAuthorName, setNoteAuthorName }) => {
             const [settings, setSettings] = useState({
                 bondPercentage: project.bondPercentage,
                 feePercentage: project.feePercentage,
@@ -5696,6 +5672,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 newSubcontractor: '',
                 templatePath: project.templatePath || ''
             });
+            const [localNoteAuthorName, setLocalNoteAuthorName] = useState(noteAuthorName || '');
 
             const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
 
@@ -5748,6 +5725,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                     subcontractors: settings.subcontractors,
                     templatePath: settings.templatePath
                 });
+                setNoteAuthorName(localNoteAuthorName.trim());
                 onClose();
             };
 
