@@ -247,6 +247,73 @@
             };
         };
 
+
+        const APPROVAL_STATUS_OPTIONS = [
+            { value: 'pending', label: 'Pending' },
+            { value: 'submitted', label: 'Submitted' },
+            { value: 'approved', label: 'Approved' }
+        ];
+
+        const getApprovalStatusLabel = (status) => {
+            const statusMap = {
+                pending: 'Pending',
+                submitted: 'Submitted',
+                approved: 'Approved'
+            };
+            return statusMap[status] || 'Pending';
+        };
+
+        const getLinkedItemStatusInfo = (project, cost) => {
+            if (!cost?.linkedType || !cost?.linkedId) {
+                return { status: '', statusLabel: 'Not Linked', isApproved: false };
+            }
+
+            if (cost.linkedType === 'change-order') {
+                const co = project.ownerChangeOrders.find(item => item.id === cost.linkedId);
+                const status = co?.status || '';
+                return {
+                    status,
+                    statusLabel: status ? status : 'Unknown',
+                    isApproved: status === 'approved'
+                };
+            }
+
+            if (cost.linkedType === 'allowance') {
+                const consumption = project.allowanceConsumptions.find(item => item.id === cost.linkedId);
+                const status = (consumption?.status || (project.isOfcc ? 'pending' : 'approved'));
+                return {
+                    status,
+                    statusLabel: getApprovalStatusLabel(status),
+                    isApproved: status === 'approved'
+                };
+            }
+
+            if (cost.linkedType === 'cmr') {
+                const consumption = project.cmrConsumptions.find(item => item.id === cost.linkedId);
+                const status = (consumption?.status || (project.isOfcc ? 'pending' : 'approved'));
+                return {
+                    status,
+                    statusLabel: getApprovalStatusLabel(status),
+                    isApproved: status === 'approved'
+                };
+            }
+
+            if (cost.linkedType === 'no-cost') {
+                return { status: 'approved', statusLabel: 'N/A', isApproved: true };
+            }
+
+            return { status: '', statusLabel: 'Unknown', isApproved: false };
+        };
+
+        const isExposureCandidate = (project, cost) => {
+            if (!cost.linkedType || !cost.linkedId) {
+                return true;
+            }
+
+            const statusInfo = getLinkedItemStatusInfo(project, cost);
+            return !statusInfo.isApproved;
+        };
+
         const ConstructionCostTracker = () => {
     const LAST_PROJECT_STORAGE_KEY = 'costTrackerLastProjectId';
     const [projects, setProjects] = useState([]);
@@ -354,6 +421,7 @@
             allowanceNotes: [],
             allowanceConsumptionNotes: [],
             cmrConsumptionNotes: [],
+            exposureNotes: [],
             changeOrderStatusHistory: []
         };
         const newProjects = [...projects, newProject];
@@ -748,7 +816,7 @@
                 // Ensure note arrays exist
                 const noteArrays = [
                     'subcontractorCostNotes', 'changeOrderNotes', 'allowanceNotes',
-                    'allowanceConsumptionNotes', 'cmrConsumptionNotes'
+                    'allowanceConsumptionNotes', 'cmrConsumptionNotes', 'exposureNotes'
                 ];
                 
                 noteArrays.forEach(arrayName => {
@@ -762,6 +830,33 @@
                 if (typeof project.feePercentage !== 'number') project.feePercentage = 10;
                 if (typeof project.isOfcc !== 'boolean') project.isOfcc = false;
                 if (typeof project.cmrBudget !== 'number') project.cmrBudget = 0;
+
+                project.allowanceConsumptions = project.allowanceConsumptions.map(consumption => ({
+                    ...consumption,
+                    status: consumption.status || (project.isOfcc ? 'pending' : 'approved')
+                }));
+
+                project.cmrConsumptions = project.cmrConsumptions.map(consumption => ({
+                    ...consumption,
+                    status: consumption.status || (project.isOfcc ? 'pending' : 'approved')
+                }));
+
+                project.subcontractorCosts = project.subcontractorCosts.map(cost => {
+                    const receivedAmount = typeof cost.amount === 'number' ? cost.amount : (parseFloat(cost.amount) || 0);
+                    let projectedAmount = typeof cost.projectedAmount === 'number' ? cost.projectedAmount : (parseFloat(cost.projectedAmount) || 0);
+
+                    if (receivedAmount > 0 && projectedAmount > 0) {
+                        projectedAmount = 0;
+                    }
+
+                    return {
+                        ...cost,
+                        amount: receivedAmount,
+                        projectedAmount,
+                        requiredWork: Boolean(cost.requiredWork),
+                        hasExposure: Boolean(cost.hasExposure)
+                    };
+                });
             });
             
             return { valid: true, data };
@@ -876,7 +971,8 @@
                             { id: 'subcontractor-costs', label: 'Subcontractor Costs' },
                             { id: 'change-orders', label: 'Owner Change Orders' },
                             { id: 'allowances', label: 'Allowances' },
-                            { id: 'cmr-contingency', label: 'CMR Contingency' }
+                            { id: 'cmr-contingency', label: 'CMR Contingency' },
+                            { id: 'exposure', label: 'Exposure' }
                         ].map(tab => 
                             React.createElement('button', {
                                 key: tab.id,
@@ -907,6 +1003,10 @@
                 updateProject: updateProject
             }),
             activeTab === 'cmr-contingency' && React.createElement(CMRContingencyTab, {
+                project: currentProject,
+                updateProject: updateProject
+            }),
+            activeTab === 'exposure' && React.createElement(ExposureTab, {
                 project: currentProject,
                 updateProject: updateProject
             })
@@ -1296,7 +1396,7 @@ const addSubcontractorCost = (cost) => {
                 type: 'allowance', 
                 id: consumption.id, 
                 label: `${consumption.number} - ${consumption.description}`,
-                status: 'Recorded'
+                status: project.isOfcc ? (consumption.status || 'pending') : 'approved'
             });
         });
         project.cmrConsumptions.forEach(consumption => {
@@ -1304,7 +1404,7 @@ const addSubcontractorCost = (cost) => {
                 type: 'cmr',
                 id: consumption.id,
                 label: `CMR ${consumption.number} - ${consumption.description}`,
-                status: 'Recorded'
+                status: project.isOfcc ? (consumption.status || 'pending') : 'approved'
             });
         });
         return items;
@@ -2690,7 +2790,7 @@ const AllowancesTab = ({ project, updateProject }) => {
     };
 
     const addAllowance = (allowance) => {
-        const newAllowance = { ...allowance, id: Date.now() };
+        const newAllowance = { ...allowance, id: Date.now(), status: allowance.status || (project.isOfcc ? 'pending' : 'approved') };
         updateProject({
             ...project,
             allowances: [...project.allowances, newAllowance]
@@ -2702,7 +2802,7 @@ const AllowancesTab = ({ project, updateProject }) => {
         updateProject({
             ...project,
             allowances: project.allowances.map(allowance => 
-                allowance.id === updatedAllowance.id ? updatedAllowance : allowance
+                allowance.id === updatedAllowance.id ? { ...updatedAllowance, status: updatedAllowance.status || (project.isOfcc ? 'pending' : 'approved') } : allowance
             )
         });
         setEditingAllowance(null);
@@ -3084,6 +3184,7 @@ const AllowancesTab = ({ project, updateProject }) => {
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Budget"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Spent"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Remaining"),
+                        project.isOfcc && React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Status"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Actions")
                     )
                 ),
@@ -3105,6 +3206,9 @@ const AllowancesTab = ({ project, updateProject }) => {
                                 React.createElement('span', {
                                     className: remaining < 0 ? 'text-red-600 font-medium' : 'text-gray-900'
                                 }, `$${remaining.toLocaleString()}`)
+                            ),
+                            project.isOfcc && React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"},
+                                React.createElement('span', {className: allowance.status === 'approved' ? 'text-green-700 font-medium' : allowance.status === 'submitted' ? 'text-blue-700 font-medium' : 'text-amber-700 font-medium'}, getApprovalStatusLabel(allowance.status || 'pending'))
                             ),
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2"},
                                 React.createElement('button', {
@@ -3178,6 +3282,7 @@ const AllowancesTab = ({ project, updateProject }) => {
                             className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100",
                             onClick: () => handleSort('amount')
                         }, "Amount", sortField === 'amount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        project.isOfcc && React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Status"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Actions")
                     )
                 ),
@@ -3202,6 +3307,7 @@ const AllowancesTab = ({ project, updateProject }) => {
                                 React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, allowance?.name),
                                 React.createElement('td', {className: "px-6 py-4 text-sm text-gray-900"}, consumption.description),
                                 React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"}, `$${total.toLocaleString()}`),
+                                project.isOfcc && React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, getApprovalStatusLabel(consumption.status || 'pending')),
                                 React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2"},
                                     React.createElement('button', {
                                         onClick: () => openConsumptionNotesModal(consumption.id, `${consumption.number} - ${allowance?.name || 'Unknown Allowance'}`),
@@ -3257,7 +3363,8 @@ const AllowancesTab = ({ project, updateProject }) => {
             title: "Add Allowance"
         }, React.createElement(AllowanceForm, {
             onSubmit: addAllowance,
-            onCancel: () => setShowAllowanceForm(false)
+            onCancel: () => setShowAllowanceForm(false),
+            isOfcc: project.isOfcc
         })),
 
         editingAllowance && React.createElement(Modal, {
@@ -3266,7 +3373,8 @@ const AllowancesTab = ({ project, updateProject }) => {
         }, React.createElement(AllowanceForm, {
             allowance: editingAllowance,
             onSubmit: updateAllowance,
-            onCancel: () => setEditingAllowance(null)
+            onCancel: () => setEditingAllowance(null),
+            isOfcc: project.isOfcc
         })),
 
         showConsumptionForm && React.createElement(Modal, {
@@ -3425,6 +3533,354 @@ const AllowancesTab = ({ project, updateProject }) => {
                 )
             )
         )
+    );
+};
+
+
+const ExposureTab = ({ project, updateProject }) => {
+    const [filters, setFilters] = useState({
+        subcontractor: '',
+        description: '',
+        linkedTo: '',
+        linkedStatus: '',
+        requiredOnly: false,
+        exposureOnly: false
+    });
+    const [sortField, setSortField] = useState('');
+    const [sortDirection, setSortDirection] = useState('asc');
+    const [notesModal, setNotesModal] = useState({ isOpen: false, itemId: null, title: '' });
+
+    const getLinkedLabel = (cost) => {
+        if (!cost.linkedType || !cost.linkedId) return 'Not Linked';
+        if (cost.linkedType === 'change-order') {
+            const co = project.ownerChangeOrders.find(item => item.id === cost.linkedId);
+            return co ? `CO ${co.number || co.itemNumber} - ${co.description}` : 'Unknown Change Order';
+        }
+        if (cost.linkedType === 'allowance') {
+            const consumption = project.allowanceConsumptions.find(item => item.id === cost.linkedId);
+            const allowance = project.allowances.find(item => item.id === consumption?.allowanceId);
+            return consumption ? `${consumption.number} - ${allowance?.name || 'Unknown Allowance'}` : 'Unknown Allowance';
+        }
+        if (cost.linkedType === 'cmr') {
+            const consumption = project.cmrConsumptions.find(item => item.id === cost.linkedId);
+            return consumption ? `CMR ${consumption.number} - ${consumption.description}` : 'Unknown CMR';
+        }
+        return 'No Cost';
+    };
+
+    const getFilteredAndSortedExposureCosts = () => {
+        const mapped = project.subcontractorCosts
+            .filter(cost => isExposureCandidate(project, cost))
+            .map(cost => {
+                const statusInfo = getLinkedItemStatusInfo(project, cost);
+                return {
+                    ...cost,
+                    receivedAmount: cost.amount || 0,
+                    projectedAmount: cost.projectedAmount || 0,
+                    linkedLabel: getLinkedLabel(cost),
+                    linkedStatusLabel: statusInfo.statusLabel
+                };
+            })
+            .filter(cost => {
+                if (filters.subcontractor && !cost.subcontractor?.toLowerCase().includes(filters.subcontractor.toLowerCase())) return false;
+                if (filters.description && !cost.description?.toLowerCase().includes(filters.description.toLowerCase())) return false;
+                if (filters.linkedTo && !cost.linkedLabel.toLowerCase().includes(filters.linkedTo.toLowerCase())) return false;
+                if (filters.linkedStatus && !cost.linkedStatusLabel.toLowerCase().includes(filters.linkedStatus.toLowerCase())) return false;
+                if (filters.requiredOnly && !cost.requiredWork) return false;
+                if (filters.exposureOnly && !cost.hasExposure) return false;
+                return true;
+            });
+
+        if (sortField) {
+            mapped.sort((a, b) => {
+                const direction = sortDirection === 'asc' ? 1 : -1;
+
+                if (sortField === 'receivedAmount' || sortField === 'projectedAmount') {
+                    return ((a[sortField] || 0) - (b[sortField] || 0)) * direction;
+                }
+
+                if (sortField === 'requiredWork' || sortField === 'hasExposure') {
+                    return ((a[sortField] ? 1 : 0) - (b[sortField] ? 1 : 0)) * direction;
+                }
+
+                const aVal = (a[sortField] || '').toString().toLowerCase();
+                const bVal = (b[sortField] || '').toString().toLowerCase();
+                if (aVal > bVal) return 1 * direction;
+                if (aVal < bVal) return -1 * direction;
+                return 0;
+            });
+        }
+
+        return mapped;
+    };
+
+    const handleSort = (field) => {
+        if (sortField === field) {
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortField(field);
+            setSortDirection('asc');
+        }
+    };
+
+    const exposureCosts = getFilteredAndSortedExposureCosts();
+
+    const requiredReceivedTotal = exposureCosts
+        .filter(cost => cost.requiredWork)
+        .reduce((sum, cost) => sum + (cost.receivedAmount || 0), 0);
+
+    const requiredProjectedTotal = exposureCosts
+        .filter(cost => cost.requiredWork)
+        .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
+
+    const exposureReceivedTotal = exposureCosts
+        .filter(cost => cost.hasExposure)
+        .reduce((sum, cost) => sum + (cost.receivedAmount || 0), 0);
+
+    const exposureProjectedTotal = exposureCosts
+        .filter(cost => cost.hasExposure)
+        .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
+
+    const toggleFlag = (costId, field) => {
+        updateProject({
+            ...project,
+            subcontractorCosts: project.subcontractorCosts.map(cost =>
+                cost.id === costId ? { ...cost, [field]: !cost[field] } : cost
+            )
+        });
+    };
+
+    const updateProjectedAmount = (costId, value) => {
+        const numericValue = parseFloat(value);
+        const parsedValue = Number.isNaN(numericValue) ? 0 : numericValue;
+
+        updateProject({
+            ...project,
+            subcontractorCosts: project.subcontractorCosts.map(cost => {
+                if (cost.id !== costId) return cost;
+                if ((cost.amount || 0) > 0) return { ...cost, projectedAmount: 0 };
+                return { ...cost, projectedAmount: parsedValue };
+            })
+        });
+    };
+
+    const getExposureItemNotes = (itemId) => {
+        return project.exposureNotes?.filter(note => note.itemId === itemId) || [];
+    };
+
+    const addExposureNote = (itemId, content) => {
+        const newNote = {
+            id: Date.now(),
+            itemId,
+            content,
+            timestamp: new Date().toISOString()
+        };
+
+        updateProject({
+            ...project,
+            exposureNotes: [...(project.exposureNotes || []), newNote]
+        });
+    };
+
+    const deleteExposureNote = (noteId) => {
+        updateProject({
+            ...project,
+            exposureNotes: (project.exposureNotes || []).filter(note => note.id !== noteId)
+        });
+    };
+
+    const openExposureNotesModal = (cost) => {
+        setNotesModal({
+            isOpen: true,
+            itemId: cost.id,
+            title: `${cost.subcontractor || 'Unknown Sub'} - ${cost.description || 'No Description'}`
+        });
+    };
+
+    const closeExposureNotesModal = () => {
+        setNotesModal({ isOpen: false, itemId: null, title: '' });
+    };
+
+    const getLinkedCostNotesForExposureItem = (itemId) => {
+        return project.subcontractorCostNotes?.filter(note => note.itemId === itemId) || [];
+    };
+
+    const hasAnyExposureNotes = (itemId) => {
+        return getExposureItemNotes(itemId).length > 0 || getLinkedCostNotesForExposureItem(itemId).length > 0;
+    };
+
+
+    const getRiskHighlightClass = (cost) => {
+        const hasNoAmount = (cost.receivedAmount || 0) === 0 && (cost.projectedAmount || 0) === 0;
+        if (!hasNoAmount) return '';
+        if (cost.hasExposure) return 'bg-red-50';
+        if (cost.requiredWork) return 'bg-orange-50';
+        return '';
+    };
+
+    return React.createElement('div', {className: 'space-y-6'},
+        React.createElement('div', {className: 'bg-white rounded-lg shadow p-6'},
+            React.createElement('h2', {className: 'text-xl font-semibold mb-4'}, 'Exposure'),
+            React.createElement('div', {className: 'grid grid-cols-2 gap-6'},
+                React.createElement('div', {className: 'bg-amber-50 border border-amber-200 rounded-lg p-4'},
+                    React.createElement('div', {className: 'text-sm text-amber-700'}, 'Required Work Total'),
+                    React.createElement('div', {className: 'text-2xl font-bold text-amber-800'}, `$${(requiredReceivedTotal + requiredProjectedTotal).toLocaleString()}`),
+                    React.createElement('div', {className: 'mt-3 text-sm text-amber-700 space-y-1'},
+                        React.createElement('div', {className: 'flex justify-between'},
+                            React.createElement('span', null, 'Received'),
+                            React.createElement('span', {className: 'font-semibold'}, `$${requiredReceivedTotal.toLocaleString()}`)
+                        ),
+                        React.createElement('div', {className: 'flex justify-between'},
+                            React.createElement('span', null, 'Projected'),
+                            React.createElement('span', {className: 'font-semibold'}, `$${requiredProjectedTotal.toLocaleString()}`)
+                        )
+                    )
+                ),
+                React.createElement('div', {className: 'bg-red-50 border border-red-200 rounded-lg p-4'},
+                    React.createElement('div', {className: 'text-sm text-red-700'}, 'Exposure Total (Work Performed)'),
+                    React.createElement('div', {className: 'text-2xl font-bold text-red-800'}, `$${(exposureReceivedTotal + exposureProjectedTotal).toLocaleString()}`),
+                    React.createElement('div', {className: 'mt-3 text-sm text-red-700 space-y-1'},
+                        React.createElement('div', {className: 'flex justify-between'},
+                            React.createElement('span', null, 'Received'),
+                            React.createElement('span', {className: 'font-semibold'}, `$${exposureReceivedTotal.toLocaleString()}`)
+                        ),
+                        React.createElement('div', {className: 'flex justify-between'},
+                            React.createElement('span', null, 'Projected'),
+                            React.createElement('span', {className: 'font-semibold'}, `$${exposureProjectedTotal.toLocaleString()}`)
+                        )
+                    )
+                )
+            ),
+            React.createElement('div', {className: 'text-sm text-gray-500 mt-2'}, `Items: ${exposureCosts.length}`),
+        ),
+
+        React.createElement('div', {className: 'bg-white rounded-lg shadow p-4'},
+            React.createElement('h3', {className: 'text-sm font-medium text-gray-700 mb-3'}, 'Filters'),
+            React.createElement('div', {className: 'grid grid-cols-6 gap-3'},
+                React.createElement('input', {
+                    type: 'text',
+                    value: filters.subcontractor,
+                    onChange: (e) => setFilters({...filters, subcontractor: e.target.value}),
+                    placeholder: 'Subcontractor',
+                    className: 'px-2 py-1 text-sm border border-gray-300 rounded'
+                }),
+                React.createElement('input', {
+                    type: 'text',
+                    value: filters.description,
+                    onChange: (e) => setFilters({...filters, description: e.target.value}),
+                    placeholder: 'Description',
+                    className: 'px-2 py-1 text-sm border border-gray-300 rounded'
+                }),
+                React.createElement('input', {
+                    type: 'text',
+                    value: filters.linkedTo,
+                    onChange: (e) => setFilters({...filters, linkedTo: e.target.value}),
+                    placeholder: 'Linked To',
+                    className: 'px-2 py-1 text-sm border border-gray-300 rounded'
+                }),
+                React.createElement('input', {
+                    type: 'text',
+                    value: filters.linkedStatus,
+                    onChange: (e) => setFilters({...filters, linkedStatus: e.target.value}),
+                    placeholder: 'Linked Status',
+                    className: 'px-2 py-1 text-sm border border-gray-300 rounded'
+                }),
+                React.createElement('label', {className: 'inline-flex items-center text-sm text-gray-700'},
+                    React.createElement('input', {
+                        type: 'checkbox',
+                        checked: filters.requiredOnly,
+                        onChange: (e) => setFilters({...filters, requiredOnly: e.target.checked}),
+                        className: 'mr-2'
+                    }),
+                    'Required only'
+                ),
+                React.createElement('label', {className: 'inline-flex items-center text-sm text-gray-700'},
+                    React.createElement('input', {
+                        type: 'checkbox',
+                        checked: filters.exposureOnly,
+                        onChange: (e) => setFilters({...filters, exposureOnly: e.target.checked}),
+                        className: 'mr-2'
+                    }),
+                    'Work performed only'
+                )
+            )
+        ),
+
+        React.createElement('div', {className: 'bg-white rounded-lg shadow overflow-hidden'},
+            React.createElement('table', {className: 'min-w-full divide-y divide-gray-200'},
+                React.createElement('thead', {className: 'bg-gray-50'},
+                    React.createElement('tr', null,
+                        React.createElement('th', {onClick: () => handleSort('submittedCONumber'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Submitted CO #', sortField === 'submittedCONumber' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('subcontractor'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Subcontractor', sortField === 'subcontractor' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('description'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Description', sortField === 'description' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('receivedAmount'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Received Amount', sortField === 'receivedAmount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('projectedAmount'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Projected Amount', sortField === 'projectedAmount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('linkedLabel'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Linked To', sortField === 'linkedLabel' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('linkedStatusLabel'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Linked Status', sortField === 'linkedStatusLabel' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('requiredWork'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Required Work', sortField === 'requiredWork' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {onClick: () => handleSort('hasExposure'), className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100'}, 'Work Performed', sortField === 'hasExposure' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                        React.createElement('th', {className: 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider'}, 'Actions')
+                    )
+                ),
+                React.createElement('tbody', {className: 'bg-white divide-y divide-gray-200'},
+                    exposureCosts.map(cost =>
+                        React.createElement('tr', {key: cost.id, className: getRiskHighlightClass(cost)},
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, cost.submittedCONumber || cost.contractChangeNumber || '-'),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, cost.subcontractor || '-'),
+                            React.createElement('td', {className: 'px-6 py-4 text-sm text-gray-900'}, cost.description || '-'),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, `$${(cost.receivedAmount || 0).toLocaleString()}`),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'},
+                                React.createElement('input', {
+                                    type: 'number',
+                                    step: '0.01',
+                                    min: '0',
+                                    value: cost.projectedAmount || '',
+                                    disabled: (cost.receivedAmount || 0) > 0,
+                                    onChange: (e) => updateProjectedAmount(cost.id, e.target.value),
+                                    className: 'w-28 px-2 py-1 border border-gray-300 rounded text-sm disabled:bg-gray-100'
+                                })
+                            ),
+                            React.createElement('td', {className: 'px-6 py-4 text-sm text-gray-900'}, cost.linkedLabel),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'}, cost.linkedStatusLabel),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'},
+                                React.createElement('input', {
+                                    type: 'checkbox',
+                                    checked: Boolean(cost.requiredWork),
+                                    onChange: () => toggleFlag(cost.id, 'requiredWork')
+                                })
+                            ),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm text-gray-900'},
+                                React.createElement('input', {
+                                    type: 'checkbox',
+                                    checked: Boolean(cost.hasExposure),
+                                    onChange: () => toggleFlag(cost.id, 'hasExposure')
+                                })
+                            ),
+                            React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm font-medium'},
+                                React.createElement('button', {
+                                    onClick: () => openExposureNotesModal(cost),
+                                    className: `p-1 rounded ${hasAnyExposureNotes(cost.id) ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900`,
+                                    title: 'Exposure item notes'
+                                }, React.createElement(MessageSquare))
+                            )
+                        )
+                    )
+                )
+            ),
+            exposureCosts.length === 0 && React.createElement('div', {className: 'p-6 text-sm text-gray-500'}, 'No exposure items match current filters.')
+        ),
+
+        React.createElement(NotesModal, {
+            isOpen: notesModal.isOpen,
+            onClose: closeExposureNotesModal,
+            title: notesModal.title,
+            notes: notesModal.itemId ? getExposureItemNotes(notesModal.itemId) : [],
+            onAddNote: (content) => addExposureNote(notesModal.itemId, content),
+            onDeleteNote: deleteExposureNote,
+            project: project,
+            linkedCosts: notesModal.itemId ? project.subcontractorCosts.filter(cost => cost.id === notesModal.itemId) : [],
+            linkType: 'exposure-item'
+        })
     );
 };
 
@@ -3674,6 +4130,7 @@ const openFilesModal = async (cost) => {
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Number"),
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Description"),
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Amount"),
+                                project.isOfcc && React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Status"),
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Actions")
                             )
                         ),
@@ -3696,6 +4153,7 @@ const openFilesModal = async (cost) => {
                                         ),
                                         React.createElement('td', {className: "px-6 py-4 text-sm text-gray-900"}, consumption.description),
                                         React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"}, `${total.toLocaleString()}`),
+                                        project.isOfcc && React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, getApprovalStatusLabel(consumption.status || 'pending')),
                                         React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2"},
                                             React.createElement('button', {
                                                 onClick: () => openCMRNotesModal(consumption.id, `CMR ${consumption.number} - ${consumption.description}`),
@@ -3712,7 +4170,7 @@ const openFilesModal = async (cost) => {
                                         )
                                     ),
                                     isExpanded && linkedCosts.length > 0 && React.createElement('tr', {key: `${consumption.id}-details`},
-                                        React.createElement('td', {colSpan: "3", className: "px-6 py-4 bg-gray-50"},
+                                        React.createElement('td', {colSpan: project.isOfcc ? "5" : "4", className: "px-6 py-4 bg-gray-50"},
                                             React.createElement('div', {className: "space-y-2"},
                                                 React.createElement('h4', {className: "font-medium text-gray-900"}, "Linked Subcontractor Costs:"),
 ...linkedCosts.map(cost => 
@@ -4404,7 +4862,6 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
                 required: true
             })
         ),
-
         React.createElement('div', null,
             React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Work Performed"),
             React.createElement('textarea', {
@@ -4589,7 +5046,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
                 type: 'allowance',
                 id: consumption.id,
                 label: `${consumption.number} - ${consumption.description}`,
-                status: 'Recorded'
+                status: project.isOfcc ? (consumption.status || 'pending') : 'approved'
             });
         });
         project.cmrConsumptions.forEach(consumption => {
@@ -4597,7 +5054,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
                 type: 'cmr',
                 id: consumption.id,
                 label: `CMR ${consumption.number} - ${consumption.description}`,
-                status: 'Recorded'
+                status: project.isOfcc ? (consumption.status || 'pending') : 'approved'
             });
         });
         return items;
@@ -4746,7 +5203,6 @@ const handleSubmit = (e) => {
                 required: true
             })
         ),
-
         React.createElement('div', null,
             React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Status"),
             React.createElement('select', {
@@ -4836,7 +5292,7 @@ const handleSubmit = (e) => {
 );
 };
 
-        const AllowanceForm = ({ allowance, onSubmit, onCancel }) => {
+        const AllowanceForm = ({ allowance, onSubmit, onCancel, isOfcc }) => {
             const [formData, setFormData] = useState({
                 name: allowance?.name || '',
                 budget: allowance?.budget || '',
@@ -4875,6 +5331,17 @@ const handleSubmit = (e) => {
                     })
                 ),
 
+                isOfcc && React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Status"),
+                    React.createElement('select', {
+                        value: formData.status || 'pending',
+                        onChange: (e) => setFormData({...formData, status: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                    },
+                        ...APPROVAL_STATUS_OPTIONS.map(option => React.createElement('option', {key: option.value, value: option.value}, option.label))
+                    )
+                ),
+
                 React.createElement('div', {className: "flex justify-end space-x-3"},
                     React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
                     React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, allowance ? 'Update' : 'Add', " Allowance")
@@ -4887,6 +5354,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
         allowanceId: consumption?.allowanceId || '',
         number: consumption?.number || '',
         description: consumption?.description || '',
+        status: consumption?.status || (project.isOfcc ? 'pending' : 'approved'),
         ...consumption
     });
 
@@ -4987,6 +5455,17 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             })
         ),
 
+        project.isOfcc && React.createElement('div', null,
+            React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Status"),
+            React.createElement('select', {
+                value: formData.status || 'pending',
+                onChange: (e) => setFormData({...formData, status: e.target.value}),
+                className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+            },
+                ...APPROVAL_STATUS_OPTIONS.map(option => React.createElement('option', {key: option.value, value: option.value}, option.label))
+            )
+        ),
+
         // Cost Linking Section
         React.createElement(CostLinkingSection, {
             project: project,
@@ -5035,6 +5514,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
     const [formData, setFormData] = useState({
         number: consumption?.number || '',
         description: consumption?.description || '',
+        status: consumption?.status || (project.isOfcc ? 'pending' : 'approved'),
         ...consumption
     });
 
@@ -5114,6 +5594,17 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 rows: "3",
                 required: true
             })
+        ),
+
+        project.isOfcc && React.createElement('div', null,
+            React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Status"),
+            React.createElement('select', {
+                value: formData.status || 'pending',
+                onChange: (e) => setFormData({...formData, status: e.target.value}),
+                className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+            },
+                ...APPROVAL_STATUS_OPTIONS.map(option => React.createElement('option', {key: option.value, value: option.value}, option.label))
+            )
         ),
 
         // Cost Linking Section
