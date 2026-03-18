@@ -318,6 +318,8 @@
         const NOTE_AUTHOR_STORAGE_KEY = 'costTrackerNoteAuthor';
         const getDefaultNoteAuthor = () => '';
         const getSavedNoteAuthor = () => '';
+        const formatNoteAuthor = () => '';
+        const formatNoteMeta = (note) => note?.timestamp ? new Date(note.timestamp).toLocaleString() : '';
         const buildNote = (itemId, content) => ({
             id: Date.now(),
             itemId,
