@@ -3793,6 +3793,44 @@ const ExposureTab = ({ project, updateProject }) => {
         .filter(cost => cost.hasExposure)
         .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
 
+    const cmrRemainingTotal = (project.cmrBudgets || []).reduce((sum, budgetItem) => {
+        const spent = (project.cmrConsumptions || [])
+            .filter(consumption => consumption.cmrBudgetId === budgetItem.id)
+            .reduce((consumptionSum, consumption) => {
+                const linkedTotal = project.subcontractorCosts
+                    .filter(cost => cost.linkedType === 'cmr' && cost.linkedId === consumption.id)
+                    .reduce((costSum, cost) => costSum + (cost.amount || 0), 0);
+
+                return consumptionSum + linkedTotal;
+            }, 0);
+
+        return sum + ((budgetItem.budget || 0) - spent);
+    }, 0);
+
+    const allowanceRemainingTotals = (project.allowances || []).reduce((totals, allowance) => {
+        const spent = (project.allowanceConsumptions || [])
+            .filter(consumption => consumption.allowanceId === allowance.id)
+            .reduce((consumptionSum, consumption) => {
+                const linkedTotal = project.subcontractorCosts
+                    .filter(cost => cost.linkedType === 'allowance' && cost.linkedId === consumption.id)
+                    .reduce((costSum, cost) => costSum + (cost.amount || 0), 0);
+
+                return consumptionSum + linkedTotal;
+            }, 0);
+
+        const remaining = (allowance.budget || 0) - spent;
+
+        if (allowance.type === 'internal') {
+            totals.internal += remaining;
+        } else {
+            totals.external += remaining;
+        }
+
+        return totals;
+    }, { external: 0, internal: 0 });
+
+    const potentialFundsTotal = cmrRemainingTotal + allowanceRemainingTotals.external + allowanceRemainingTotals.internal;
+
     const toggleFlag = (costId, field) => {
         updateProject({
             ...project,
@@ -3868,7 +3906,7 @@ const ExposureTab = ({ project, updateProject }) => {
     return React.createElement('div', {className: 'space-y-6'},
         React.createElement('div', {className: 'bg-white rounded-lg shadow p-6'},
             React.createElement('h2', {className: 'text-xl font-semibold mb-4'}, 'Exposure'),
-            React.createElement('div', {className: 'grid grid-cols-2 gap-6'},
+            React.createElement('div', {className: 'grid grid-cols-1 md:grid-cols-3 gap-6'},
                 React.createElement('div', {className: 'bg-amber-50 border border-amber-200 rounded-lg p-4'},
                     React.createElement('div', {className: 'text-sm text-amber-700'}, 'Required Work Total'),
                     React.createElement('div', {className: 'text-2xl font-bold text-amber-800'}, `$${(requiredReceivedTotal + requiredProjectedTotal).toLocaleString()}`),
@@ -3894,6 +3932,24 @@ const ExposureTab = ({ project, updateProject }) => {
                         React.createElement('div', {className: 'flex justify-between'},
                             React.createElement('span', null, 'Projected'),
                             React.createElement('span', {className: 'font-semibold'}, `$${exposureProjectedTotal.toLocaleString()}`)
+                        )
+                    )
+                ),
+                React.createElement('div', {className: 'bg-green-50 border border-green-200 rounded-lg p-4'},
+                    React.createElement('div', {className: 'text-sm text-green-700'}, 'Potential Funds'),
+                    React.createElement('div', {className: 'text-2xl font-bold text-green-800'}, `$${potentialFundsTotal.toLocaleString()}`),
+                    React.createElement('div', {className: 'mt-3 text-sm text-green-700 space-y-1'},
+                        React.createElement('div', {className: 'flex justify-between'},
+                            React.createElement('span', null, 'CMR Contingency'),
+                            React.createElement('span', {className: 'font-semibold'}, `$${cmrRemainingTotal.toLocaleString()}`)
+                        ),
+                        React.createElement('div', {className: 'flex justify-between'},
+                            React.createElement('span', null, 'External Allowances'),
+                            React.createElement('span', {className: 'font-semibold'}, `$${allowanceRemainingTotals.external.toLocaleString()}`)
+                        ),
+                        React.createElement('div', {className: 'flex justify-between'},
+                            React.createElement('span', null, 'Internal Allowances'),
+                            React.createElement('span', {className: 'font-semibold'}, `$${allowanceRemainingTotals.internal.toLocaleString()}`)
                         )
                     )
                 )
