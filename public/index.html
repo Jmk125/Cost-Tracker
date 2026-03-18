@@ -254,6 +254,11 @@
             { value: 'approved', label: 'Approved' }
         ];
 
+        const ALLOWANCE_TYPE_OPTIONS = [
+            { value: 'external', label: 'External' },
+            { value: 'internal', label: 'Internal' }
+        ];
+
         const getApprovalStatusLabel = (status) => {
             const statusMap = {
                 pending: 'Pending',
@@ -388,6 +393,11 @@
             normalizedProject.cmrBudgets = getCMRBudgetItems(normalizedProject);
             normalizedProject.cmrBudget = getTotalCMRBudget(normalizedProject);
             const fallbackCMRBudgetId = normalizedProject.cmrBudgets[0]?.id || null;
+            normalizedProject.allowances = Array.isArray(normalizedProject.allowances) ? normalizedProject.allowances.map(allowance => ({
+                ...allowance,
+                type: allowance?.type === 'internal' ? 'internal' : 'external',
+                status: allowance?.status || (normalizedProject.isOfcc ? 'pending' : 'approved')
+            })) : [];
             normalizedProject.cmrConsumptions = Array.isArray(normalizedProject.cmrConsumptions) ? normalizedProject.cmrConsumptions.map(consumption => ({
                 ...consumption,
                 cmrBudgetId: consumption.cmrBudgetId || fallbackCMRBudgetId,
@@ -690,7 +700,7 @@
         
         // 3. ALLOWANCES SHEET
         const allowancesData = [
-            ['Type', 'Item', 'Description', 'Budget/Number', 'Amount Spent/Total', 'Remaining', 'Notes', 'Linked Costs']
+            ['Type', 'Item', 'Description', 'Budget/Number', 'Amount Spent/Total', 'Remaining', 'Allowance Type', 'Notes', 'Linked Costs']
         ];
         
         // Add allowance budgets
@@ -714,6 +724,7 @@
                 allowance.budget,
                 spent,
                 remaining,
+                allowance.type === 'internal' ? 'Internal' : 'External',
                 notes,
                 ''
             ]);
@@ -740,6 +751,7 @@
                 consumption.number,
                 total,
                 '',
+                allowance?.type === 'internal' ? 'Internal' : 'External',
                 notes,
                 linkedCostsText
             ]);
@@ -754,6 +766,7 @@
             {wch: 15}, // Budget/Number
             {wch: 15}, // Amount Spent/Total
             {wch: 12}, // Remaining
+            {wch: 16}, // Allowance Type
             {wch: 50}, // Notes
             {wch: 40}  // Linked Costs
         ];
@@ -3309,6 +3322,7 @@ const AllowancesTab = ({ project, updateProject }) => {
                 React.createElement('thead', {className: "bg-gray-50"},
                     React.createElement('tr', null,
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Allowance"),
+                        React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Type"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Budget"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Spent"),
                         React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Remaining"),
@@ -3320,9 +3334,18 @@ const AllowancesTab = ({ project, updateProject }) => {
                     project.allowances.map(allowance => {
                         const spent = getAllowanceSpent(allowance.id);
                         const remaining = allowance.budget - spent;
+                        const isInternalAllowance = allowance.type === 'internal';
                         
-                        return React.createElement('tr', {key: allowance.id},
+                        return React.createElement('tr', {
+                            key: allowance.id,
+                            className: isInternalAllowance ? 'bg-gray-100' : 'bg-white'
+                        },
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900"}, allowance.name),
+                            React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"},
+                                React.createElement('span', {
+                                    className: `inline-flex rounded-full px-2 py-1 text-xs font-medium ${isInternalAllowance ? 'bg-gray-200 text-gray-800' : 'bg-blue-100 text-blue-800'}`
+                                }, isInternalAllowance ? 'Internal' : 'External')
+                            ),
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"}, `$${allowance.budget.toLocaleString()}`),
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm text-gray-900"},
                                 spent > 0 ? React.createElement('button', {
@@ -5477,6 +5500,7 @@ const handleSubmit = (e) => {
             const [formData, setFormData] = useState({
                 name: allowance?.name || '',
                 budget: allowance?.budget || '',
+                type: allowance?.type || 'external',
                 ...allowance
             });
 
@@ -5510,6 +5534,17 @@ const handleSubmit = (e) => {
                         className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
                         required: true
                     })
+                ),
+
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Allowance Type"),
+                    React.createElement('select', {
+                        value: formData.type || 'external',
+                        onChange: (e) => setFormData({...formData, type: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md"
+                    },
+                        ...ALLOWANCE_TYPE_OPTIONS.map(option => React.createElement('option', {key: option.value, value: option.value}, option.label))
+                    )
                 ),
 
                 isOfcc && React.createElement('div', null,
