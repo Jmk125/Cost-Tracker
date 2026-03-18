@@ -314,6 +314,44 @@
             return !statusInfo.isApproved;
         };
 
+
+        const NOTE_AUTHOR_STORAGE_KEY = 'costTrackerNoteAuthor';
+        const getDefaultNoteAuthor = () => '';
+        const buildNote = (itemId, content) => ({
+            id: Date.now(),
+            itemId,
+            content,
+            timestamp: new Date().toISOString()
+        });
+
+        const NOTE_ARRAY_FIELDS = [
+            'subcontractorCostNotes',
+            'changeOrderNotes',
+            'allowanceNotes',
+            'allowanceConsumptionNotes',
+            'cmrConsumptionNotes',
+            'exposureNotes'
+        ];
+
+        const sanitizeNote = (note) => ({
+            id: note?.id,
+            itemId: note?.itemId,
+            content: note?.content || '',
+            timestamp: note?.timestamp || new Date().toISOString()
+        });
+
+        const sanitizeProjectNotes = (project) => {
+            const sanitizedProject = { ...project };
+            NOTE_ARRAY_FIELDS.forEach((fieldName) => {
+                sanitizedProject[fieldName] = Array.isArray(project?.[fieldName])
+                    ? project[fieldName].map(sanitizeNote)
+                    : [];
+            });
+            return sanitizedProject;
+        };
+
+        const sanitizeProjectsForStorage = (projects) => (projects || []).map(sanitizeProjectNotes);
+
         const ConstructionCostTracker = () => {
     const LAST_PROJECT_STORAGE_KEY = 'costTrackerLastProjectId';
     const [projects, setProjects] = useState([]);
@@ -350,13 +388,20 @@
 
     // Load projects from server on mount
     useEffect(() => {
+        localStorage.removeItem(NOTE_AUTHOR_STORAGE_KEY);
         loadProjects();
     }, []);
+
 
     const loadProjects = async () => {
         setIsLoading(true);
         try {
-            const serverProjects = await window.api.loadProjects();
+            const rawProjects = await window.api.loadProjects();
+            const serverProjects = sanitizeProjectsForStorage(rawProjects);
+
+            if (JSON.stringify(rawProjects) !== JSON.stringify(serverProjects)) {
+                await window.api.saveProjects(serverProjects);
+            }
 
             const storedProjectId = parseInt(localStorage.getItem(LAST_PROJECT_STORAGE_KEY), 10);
             const preferredProject = serverProjects.find(project => project.id === storedProjectId);
@@ -391,6 +436,7 @@
             setIsSaving(false);
         }
     };
+
 
     const updateProject = (updatedProject) => {
         const newProjects = projects.map(p => p.id === updatedProject.id ? updatedProject : p);
@@ -814,15 +860,13 @@
                 });
                 
                 // Ensure note arrays exist
-                const noteArrays = [
-                    'subcontractorCostNotes', 'changeOrderNotes', 'allowanceNotes',
-                    'allowanceConsumptionNotes', 'cmrConsumptionNotes', 'exposureNotes'
-                ];
+                const noteArrays = NOTE_ARRAY_FIELDS;
                 
                 noteArrays.forEach(arrayName => {
                     if (!Array.isArray(project[arrayName])) {
                         project[arrayName] = [];
                     }
+                    project[arrayName] = project[arrayName].map(sanitizeNote);
                 });
                 
                 // Ensure numeric fields exist
@@ -5802,6 +5846,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                         )
                     )
                 ),
+
 
     React.createElement('div', null,
         React.createElement('label', {className: "block text-sm font-medium text-gray-700 mb-2"}, "Change Order Template"),
