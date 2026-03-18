@@ -3665,7 +3665,7 @@ const ExposureTab = ({ project, updateProject }) => {
     };
 
     const getExposureItemNotes = (itemId) => {
-        return project.subcontractorCostNotes?.filter(note => note.itemId === itemId) || [];
+        return project.exposureNotes?.filter(note => note.itemId === itemId) || [];
     };
 
     const addExposureNote = (itemId, content) => {
