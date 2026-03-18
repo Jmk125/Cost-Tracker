@@ -421,6 +421,7 @@
             allowanceNotes: [],
             allowanceConsumptionNotes: [],
             cmrConsumptionNotes: [],
+            exposureNotes: [],
             changeOrderStatusHistory: []
         };
         const newProjects = [...projects, newProject];
@@ -815,7 +816,7 @@
                 // Ensure note arrays exist
                 const noteArrays = [
                     'subcontractorCostNotes', 'changeOrderNotes', 'allowanceNotes',
-                    'allowanceConsumptionNotes', 'cmrConsumptionNotes'
+                    'allowanceConsumptionNotes', 'cmrConsumptionNotes', 'exposureNotes'
                 ];
                 
                 noteArrays.forEach(arrayName => {
@@ -3677,14 +3678,14 @@ const ExposureTab = ({ project, updateProject }) => {
 
         updateProject({
             ...project,
-            subcontractorCostNotes: [...(project.subcontractorCostNotes || []), newNote]
+            exposureNotes: [...(project.exposureNotes || []), newNote]
         });
     };
 
     const deleteExposureNote = (noteId) => {
         updateProject({
             ...project,
-            subcontractorCostNotes: (project.subcontractorCostNotes || []).filter(note => note.id !== noteId)
+            exposureNotes: (project.exposureNotes || []).filter(note => note.id !== noteId)
         });
     };
 
@@ -3698,6 +3699,14 @@ const ExposureTab = ({ project, updateProject }) => {
 
     const closeExposureNotesModal = () => {
         setNotesModal({ isOpen: false, itemId: null, title: '' });
+    };
+
+    const getLinkedCostNotesForExposureItem = (itemId) => {
+        return project.subcontractorCostNotes?.filter(note => note.itemId === itemId) || [];
+    };
+
+    const hasAnyExposureNotes = (itemId) => {
+        return getExposureItemNotes(itemId).length > 0 || getLinkedCostNotesForExposureItem(itemId).length > 0;
     };
 
 
@@ -3850,7 +3859,7 @@ const ExposureTab = ({ project, updateProject }) => {
                             React.createElement('td', {className: 'px-6 py-4 whitespace-nowrap text-sm font-medium'},
                                 React.createElement('button', {
                                     onClick: () => openExposureNotesModal(cost),
-                                    className: `p-1 rounded ${getExposureItemNotes(cost.id).length > 0 ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900`,
+                                    className: `p-1 rounded ${hasAnyExposureNotes(cost.id) ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900`,
                                     title: 'Exposure item notes'
                                 }, React.createElement(MessageSquare))
                             )
@@ -3867,7 +3876,10 @@ const ExposureTab = ({ project, updateProject }) => {
             title: notesModal.title,
             notes: notesModal.itemId ? getExposureItemNotes(notesModal.itemId) : [],
             onAddNote: (content) => addExposureNote(notesModal.itemId, content),
-            onDeleteNote: deleteExposureNote
+            onDeleteNote: deleteExposureNote,
+            project: project,
+            linkedCosts: notesModal.itemId ? project.subcontractorCosts.filter(cost => cost.id === notesModal.itemId) : [],
+            linkType: 'exposure-item'
         })
     );
 };
