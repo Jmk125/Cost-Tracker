@@ -325,6 +325,11 @@
             return host.toUpperCase();
         };
 
+        const getSavedNoteAuthor = () => {
+            if (typeof window === 'undefined') return getDefaultNoteAuthor();
+            return localStorage.getItem(NOTE_AUTHOR_STORAGE_KEY) || getDefaultNoteAuthor();
+        };
+
         const formatNoteAuthor = (note) => {
             if (!note?.authorName) return 'Unknown';
             return note.authorName;
@@ -436,7 +441,6 @@
         }
     };
 
-    const createNoteForItem = (itemId, content) => buildNote(itemId, content, noteAuthorName);
 
     const updateProject = (updatedProject) => {
         const newProjects = projects.map(p => p.id === updatedProject.id ? updatedProject : p);
@@ -1530,7 +1534,7 @@ const addSubcontractorCost = (cost) => {
     };
 
     const addNote = (itemId, content) => {
-        const newNote = createNoteForItem(itemId, content);
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
         
         const updatedNotes = [...(project.subcontractorCostNotes || []), newNote];
         updateProject({
@@ -2373,7 +2377,7 @@ const handleGeneratePDF = async (changeOrder) => {
             };
 
             const addCONote = (itemId, content) => {
-                const newNote = createNoteForItem(itemId, content);
+                const newNote = buildNote(itemId, content, getSavedNoteAuthor());
                 
                 const updatedNotes = [...(project.changeOrderNotes || []), newNote];
                 updateProject({
@@ -3047,7 +3051,7 @@ const AllowancesTab = ({ project, updateProject }) => {
     };
 
     const addAllowanceNote = (itemId, content) => {
-        const newNote = createNoteForItem(itemId, content);
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
         
         const updatedNotes = [...(project.allowanceNotes || []), newNote];
         updateProject({
@@ -3077,7 +3081,7 @@ const AllowancesTab = ({ project, updateProject }) => {
     };
 
     const addConsumptionNote = (itemId, content) => {
-        const newNote = createNoteForItem(itemId, content);
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
         
         const updatedNotes = [...(project.allowanceConsumptionNotes || []), newNote];
         updateProject({
@@ -3697,7 +3701,7 @@ const ExposureTab = ({ project, updateProject }) => {
     };
 
     const addExposureNote = (itemId, content) => {
-        const newNote = createNoteForItem(itemId, content);
+        const newNote = buildNote(itemId, content, getSavedNoteAuthor());
 
         updateProject({
             ...project,
@@ -4050,7 +4054,7 @@ const openFilesModal = async (cost) => {
             };
 
             const addCMRNote = (itemId, content) => {
-                const newNote = createNoteForItem(itemId, content);
+                const newNote = buildNote(itemId, content, getSavedNoteAuthor());
                 
                 const updatedNotes = [...(project.cmrConsumptionNotes || []), newNote];
                 updateProject({
