@@ -3910,6 +3910,20 @@ const ExposureTab = ({ project, updateProject }) => {
         .filter(cost => cost.hasExposure)
         .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
 
+    const pendingExposureCosts = exposureCosts.filter(cost => {
+        if (!cost.hasExposure || !cost.linkedType || !cost.linkedId) return false;
+        return !getLinkedItemStatusInfo(project, cost).isApproved;
+    });
+
+    const pendingExposureReceivedTotal = pendingExposureCosts
+        .reduce((sum, cost) => sum + (cost.receivedAmount || 0), 0);
+
+    const pendingExposureProjectedTotal = pendingExposureCosts
+        .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
+
+    const projectedExposureReceivedTotal = exposureReceivedTotal - pendingExposureReceivedTotal;
+    const projectedExposureProjectedTotal = exposureProjectedTotal - pendingExposureProjectedTotal;
+
     const emptyPotentialFundsBreakdown = () => ({
         totalPotentialFunds: 0,
         pendingCosts: 0,
@@ -4072,16 +4086,41 @@ const ExposureTab = ({ project, updateProject }) => {
                     )
                 ),
                 React.createElement('div', {className: 'bg-red-50 border border-red-200 rounded-lg p-4'},
-                    React.createElement('div', {className: 'text-sm text-red-700'}, 'Exposure Total (Work Performed)'),
-                    React.createElement('div', {className: 'text-2xl font-bold text-red-800'}, `$${(exposureReceivedTotal + exposureProjectedTotal).toLocaleString()}`),
-                    React.createElement('div', {className: 'mt-3 text-sm text-red-700 space-y-1'},
-                        React.createElement('div', {className: 'flex justify-between'},
-                            React.createElement('span', null, 'Received'),
-                            React.createElement('span', {className: 'font-semibold'}, `$${exposureReceivedTotal.toLocaleString()}`)
-                        ),
-                        React.createElement('div', {className: 'flex justify-between'},
-                            React.createElement('span', null, 'Projected'),
-                            React.createElement('span', {className: 'font-semibold'}, `$${exposureProjectedTotal.toLocaleString()}`)
+                    React.createElement('div', {className: 'text-sm text-red-700 mb-3'}, 'Exposure Outlook (Work Performed)'),
+                    React.createElement('div', {className: 'grid grid-cols-1 lg:grid-cols-3 gap-4'},
+                        [{
+                            key: 'exposureTotal',
+                            label: 'Exposure Total',
+                            totalClassName: 'text-red-800',
+                            received: exposureReceivedTotal,
+                            projected: exposureProjectedTotal
+                        }, {
+                            key: 'pendingExposure',
+                            label: 'Pending Cost Exposure',
+                            totalClassName: 'text-amber-700',
+                            received: pendingExposureReceivedTotal,
+                            projected: pendingExposureProjectedTotal
+                        }, {
+                            key: 'projectedExposure',
+                            label: 'Projected Exposure',
+                            totalClassName: 'text-red-900',
+                            received: projectedExposureReceivedTotal,
+                            projected: projectedExposureProjectedTotal
+                        }].map(column =>
+                            React.createElement('div', {key: column.key, className: 'bg-white/60 border border-red-100 rounded-lg p-3'},
+                                React.createElement('div', {className: 'text-sm text-red-700'}, column.label),
+                                React.createElement('div', {className: `text-2xl font-bold ${column.totalClassName}`}, `$${(column.received + column.projected).toLocaleString()}`),
+                                React.createElement('div', {className: 'mt-3 text-sm text-red-700 space-y-1'},
+                                    React.createElement('div', {className: 'flex justify-between'},
+                                        React.createElement('span', null, 'Received'),
+                                        React.createElement('span', {className: 'font-semibold'}, `$${column.received.toLocaleString()}`)
+                                    ),
+                                    React.createElement('div', {className: 'flex justify-between'},
+                                        React.createElement('span', null, 'Projected'),
+                                        React.createElement('span', {className: 'font-semibold'}, `$${column.projected.toLocaleString()}`)
+                                    )
+                                )
+                            )
                         )
                     )
                 ),
