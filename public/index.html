@@ -3910,10 +3910,20 @@ const ExposureTab = ({ project, updateProject }) => {
         .filter(cost => cost.hasExposure)
         .reduce((sum, cost) => sum + (cost.projectedAmount || 0), 0);
 
-    const pendingExposureCosts = exposureCosts.filter(cost => {
+    const isPendingExposureCost = (cost) => {
         if (!cost.hasExposure || !cost.linkedType || !cost.linkedId) return false;
-        return !getLinkedItemStatusInfo(project, cost).isApproved;
-    });
+
+        const statusInfo = getLinkedItemStatusInfo(project, cost);
+        if (statusInfo.isApproved) return false;
+
+        if (cost.linkedType === 'change-order') {
+            return statusInfo.status === 'submitted-ae' || statusInfo.status === 'submitted-district';
+        }
+
+        return true;
+    };
+
+    const pendingExposureCosts = exposureCosts.filter(cost => isPendingExposureCost(cost));
 
     const pendingExposureReceivedTotal = pendingExposureCosts
         .reduce((sum, cost) => sum + (cost.receivedAmount || 0), 0);
