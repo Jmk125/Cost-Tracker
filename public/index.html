@@ -363,7 +363,7 @@
         const getCMRBudgetItems = (project) => {
             if (Array.isArray(project?.cmrBudgets) && project.cmrBudgets.length > 0) {
                 return project.cmrBudgets.map((budget, index) => ({
-                    id: budget?.id || `cmr-budget-${index + 1}`,
+                    id: budget?.id != null ? String(budget.id) : `cmr-budget-${index + 1}`,
                     name: budget?.name || `CMR Contingency ${index + 1}`,
                     budget: typeof budget?.budget === 'number' ? budget.budget : (parseFloat(budget?.budget) || 0),
                     status: budget?.status || (project?.isOfcc ? 'pending' : 'approved')
@@ -400,7 +400,9 @@
             })) : [];
             normalizedProject.cmrConsumptions = Array.isArray(normalizedProject.cmrConsumptions) ? normalizedProject.cmrConsumptions.map(consumption => ({
                 ...consumption,
-                cmrBudgetId: consumption.cmrBudgetId || fallbackCMRBudgetId,
+                cmrBudgetId: consumption.cmrBudgetId != null && consumption.cmrBudgetId !== ''
+                    ? String(consumption.cmrBudgetId)
+                    : fallbackCMRBudgetId,
                 status: consumption.status || (normalizedProject.isOfcc ? 'pending' : 'approved')
             })) : [];
             return normalizedProject;
@@ -4229,7 +4231,7 @@ const ExposureTab = ({ project, updateProject }) => {
             const addBudget = (budgetItem) => {
                 const newBudget = {
                     ...budgetItem,
-                    id: Date.now(),
+                    id: Date.now().toString(),
                     status: budgetItem.status || (project.isOfcc ? 'pending' : 'approved')
                 };
                 syncProjectCMRBudgets([...cmrBudgets, newBudget]);
@@ -5944,7 +5946,11 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             const handleSubmit = (e) => {
                 e.preventDefault();
                 const consumptionId = consumption?.id || Date.now();
-                const newOrUpdatedConsumption = { ...formData, id: consumptionId, cmrBudgetId: formData.cmrBudgetId };
+                const newOrUpdatedConsumption = {
+                    ...formData,
+                    id: consumptionId,
+                    cmrBudgetId: formData.cmrBudgetId ? String(formData.cmrBudgetId) : ''
+                };
 
                 const updatedCosts = project.subcontractorCosts.map(cost => {
                     const isSelected = linkedCosts.find(lc => lc.id === cost.id);
