@@ -3817,6 +3817,22 @@ const ExposureTab = ({ project, updateProject }) => {
     const [sortField, setSortField] = useState('');
     const [sortDirection, setSortDirection] = useState('asc');
     const [notesModal, setNotesModal] = useState({ isOpen: false, itemId: null, title: '' });
+    const [activeHighlight, setActiveHighlight] = useState(null);
+
+    const HIGHLIGHT_STYLES = {
+        amber: {
+            rowClassName: 'bg-amber-100 ring-1 ring-inset ring-amber-300',
+            buttonClassName: 'text-amber-800 hover:border-amber-300 hover:bg-amber-100/70 focus-visible:ring-amber-400'
+        },
+        red: {
+            rowClassName: 'bg-red-100 ring-1 ring-inset ring-red-300',
+            buttonClassName: 'text-red-800 hover:border-red-300 hover:bg-red-100/70 focus-visible:ring-red-400'
+        },
+        green: {
+            rowClassName: 'bg-green-100 ring-1 ring-inset ring-green-300',
+            buttonClassName: 'text-green-800 hover:border-green-300 hover:bg-green-100/70 focus-visible:ring-green-400'
+        }
+    };
 
     const getLinkedLabel = (cost) => {
         if (!cost.linkedType || !cost.linkedId) return 'Not Linked';
@@ -4068,8 +4084,132 @@ const ExposureTab = ({ project, updateProject }) => {
         return getExposureItemNotes(itemId).length > 0 || getLinkedCostNotesForExposureItem(itemId).length > 0;
     };
 
+    const highlightDefinitions = {
+        requiredTotal: {
+            label: 'Required Work Total',
+            color: 'amber',
+            matchCost: (cost) => cost.requiredWork && ((cost.receivedAmount || 0) > 0 || (cost.projectedAmount || 0) > 0)
+        },
+        requiredReceived: {
+            label: 'Required Work Received',
+            color: 'amber',
+            matchCost: (cost) => cost.requiredWork && (cost.receivedAmount || 0) > 0
+        },
+        requiredProjected: {
+            label: 'Required Work Projected',
+            color: 'amber',
+            matchCost: (cost) => cost.requiredWork && (cost.projectedAmount || 0) > 0
+        },
+        exposureTotal: {
+            label: 'Exposure Total',
+            color: 'red',
+            matchCost: (cost) => cost.hasExposure && ((cost.receivedAmount || 0) > 0 || (cost.projectedAmount || 0) > 0)
+        },
+        exposureTotalReceived: {
+            label: 'Exposure Total Received',
+            color: 'red',
+            matchCost: (cost) => cost.hasExposure && (cost.receivedAmount || 0) > 0
+        },
+        exposureTotalProjected: {
+            label: 'Exposure Total Projected',
+            color: 'red',
+            matchCost: (cost) => cost.hasExposure && (cost.projectedAmount || 0) > 0
+        },
+        pendingExposure: {
+            label: 'Pending Cost Exposure',
+            color: 'red',
+            matchCost: (cost) => isPendingExposureCost(cost) && ((cost.receivedAmount || 0) > 0 || (cost.projectedAmount || 0) > 0)
+        },
+        pendingExposureReceived: {
+            label: 'Pending Cost Exposure Received',
+            color: 'red',
+            matchCost: (cost) => isPendingExposureCost(cost) && (cost.receivedAmount || 0) > 0
+        },
+        pendingExposureProjected: {
+            label: 'Pending Cost Exposure Projected',
+            color: 'red',
+            matchCost: (cost) => isPendingExposureCost(cost) && (cost.projectedAmount || 0) > 0
+        },
+        projectedExposure: {
+            label: 'Projected Exposure',
+            color: 'red',
+            matchCost: (cost) => cost.hasExposure && !isPendingExposureCost(cost) && ((cost.receivedAmount || 0) > 0 || (cost.projectedAmount || 0) > 0)
+        },
+        projectedExposureReceived: {
+            label: 'Projected Exposure Received',
+            color: 'red',
+            matchCost: (cost) => cost.hasExposure && !isPendingExposureCost(cost) && (cost.receivedAmount || 0) > 0
+        },
+        projectedExposureProjected: {
+            label: 'Projected Exposure Projected',
+            color: 'red',
+            matchCost: (cost) => cost.hasExposure && !isPendingExposureCost(cost) && (cost.projectedAmount || 0) > 0
+        },
+        pendingCosts: {
+            label: 'Pending Costs',
+            color: 'green',
+            matchCost: (cost) => {
+                if (!cost.linkedType || !cost.linkedId) return false;
+                if (cost.linkedType !== 'allowance' && cost.linkedType !== 'cmr') return false;
+                return !getLinkedItemStatusInfo(project, cost).isApproved && (cost.receivedAmount || 0) > 0;
+            }
+        },
+        pendingCostsCmr: {
+            label: 'Pending Costs - CMR Contingency',
+            color: 'green',
+            matchCost: (cost) => cost.linkedType === 'cmr' && !getLinkedItemStatusInfo(project, cost).isApproved && (cost.receivedAmount || 0) > 0
+        },
+        pendingCostsExternal: {
+            label: 'Pending Costs - External Allowances',
+            color: 'green',
+            matchCost: (cost) => {
+                if (cost.linkedType !== 'allowance' || (cost.receivedAmount || 0) <= 0) return false;
+                const consumption = project.allowanceConsumptions.find(item => item.id === cost.linkedId);
+                const allowance = project.allowances.find(item => item.id === consumption?.allowanceId);
+                return !getLinkedItemStatusInfo(project, cost).isApproved && allowance?.type !== 'internal';
+            }
+        },
+        pendingCostsInternal: {
+            label: 'Pending Costs - Internal Allowances',
+            color: 'green',
+            matchCost: (cost) => {
+                if (cost.linkedType !== 'allowance' || (cost.receivedAmount || 0) <= 0) return false;
+                const consumption = project.allowanceConsumptions.find(item => item.id === cost.linkedId);
+                const allowance = project.allowances.find(item => item.id === consumption?.allowanceId);
+                return !getLinkedItemStatusInfo(project, cost).isApproved && allowance?.type === 'internal';
+            }
+        }
+    };
+
+    const setHighlight = (key) => {
+        setActiveHighlight(current => current === key ? null : key);
+    };
+
+    const renderHighlightValue = (amount, definitionKey, extraClassName = '') => {
+        const definition = highlightDefinitions[definitionKey];
+        if (!definition) {
+            return React.createElement('span', { className: extraClassName }, `$${amount.toLocaleString()}`);
+        }
+
+        const style = HIGHLIGHT_STYLES[definition.color] || HIGHLIGHT_STYLES.red;
+        const isActive = activeHighlight === definitionKey;
+
+        return React.createElement('button', {
+            type: 'button',
+            onClick: () => setHighlight(definitionKey),
+            title: `${isActive ? 'Clear' : 'Highlight'} ${definition.label}`,
+            className: `rounded-md border px-2 py-1 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${isActive ? `${style.buttonClassName} border-current bg-white shadow-sm` : `border-transparent bg-transparent ${style.buttonClassName}`} ${extraClassName}`.trim()
+        }, `$${amount.toLocaleString()}`);
+    };
 
     const getRiskHighlightClass = (cost) => {
+        if (activeHighlight) {
+            const definition = highlightDefinitions[activeHighlight];
+            if (definition?.matchCost(cost)) {
+                return HIGHLIGHT_STYLES[definition.color]?.rowClassName || '';
+            }
+        }
+
         const hasNoAmount = (cost.receivedAmount || 0) === 0 && (cost.projectedAmount || 0) === 0;
         if (!hasNoAmount) return '';
         if (cost.hasExposure) return 'bg-red-50';
@@ -4083,15 +4223,15 @@ const ExposureTab = ({ project, updateProject }) => {
             React.createElement('div', {className: 'grid grid-cols-1 md:grid-cols-3 gap-6'},
                 React.createElement('div', {className: 'bg-amber-50 border border-amber-200 rounded-lg p-4'},
                     React.createElement('div', {className: 'text-sm text-amber-700'}, 'Required Work Total'),
-                    React.createElement('div', {className: 'text-2xl font-bold text-amber-800'}, `$${(requiredReceivedTotal + requiredProjectedTotal).toLocaleString()}`),
+                    renderHighlightValue(requiredReceivedTotal + requiredProjectedTotal, 'requiredTotal', 'text-2xl font-bold'),
                     React.createElement('div', {className: 'mt-3 text-sm text-amber-700 space-y-1'},
                         React.createElement('div', {className: 'flex justify-between'},
                             React.createElement('span', null, 'Received'),
-                            React.createElement('span', {className: 'font-semibold'}, `$${requiredReceivedTotal.toLocaleString()}`)
+                            renderHighlightValue(requiredReceivedTotal, 'requiredReceived', 'font-semibold')
                         ),
                         React.createElement('div', {className: 'flex justify-between'},
                             React.createElement('span', null, 'Projected'),
-                            React.createElement('span', {className: 'font-semibold'}, `$${requiredProjectedTotal.toLocaleString()}`)
+                            renderHighlightValue(requiredProjectedTotal, 'requiredProjected', 'font-semibold')
                         )
                     )
                 ),
@@ -4119,15 +4259,15 @@ const ExposureTab = ({ project, updateProject }) => {
                         }].map(column =>
                             React.createElement('div', {key: column.key, className: 'bg-white/60 border border-red-100 rounded-lg p-3'},
                                 React.createElement('div', {className: 'text-sm text-red-700'}, column.label),
-                                React.createElement('div', {className: `text-2xl font-bold ${column.totalClassName}`}, `$${(column.received + column.projected).toLocaleString()}`),
+                                renderHighlightValue(column.received + column.projected, column.key, `text-2xl font-bold ${column.totalClassName}`),
                                 React.createElement('div', {className: 'mt-3 text-sm text-red-700 space-y-1'},
                                     React.createElement('div', {className: 'flex justify-between'},
                                         React.createElement('span', null, 'Received'),
-                                        React.createElement('span', {className: 'font-semibold'}, `$${column.received.toLocaleString()}`)
+                                        renderHighlightValue(column.received, `${column.key}Received`, 'font-semibold')
                                     ),
                                     React.createElement('div', {className: 'flex justify-between'},
                                         React.createElement('span', null, 'Projected'),
-                                        React.createElement('span', {className: 'font-semibold'}, `$${column.projected.toLocaleString()}`)
+                                        renderHighlightValue(column.projected, `${column.key}Projected`, 'font-semibold')
                                     )
                                 )
                             )
@@ -4170,19 +4310,19 @@ const ExposureTab = ({ project, updateProject }) => {
                         }].map(column =>
                             React.createElement('div', {key: column.key, className: 'bg-white/60 border border-green-100 rounded-lg p-3'},
                                 React.createElement('div', {className: 'text-sm text-green-700'}, column.label),
-                                React.createElement('div', {className: `text-2xl font-bold ${column.totalClassName}`}, `$${column.values.total.toLocaleString()}`),
+                                column.key === 'pendingCosts' ? renderHighlightValue(column.values.total, 'pendingCosts', `text-2xl font-bold ${column.totalClassName}`) : React.createElement('div', {className: `text-2xl font-bold ${column.totalClassName}`}, `$${column.values.total.toLocaleString()}`),
                                 React.createElement('div', {className: 'mt-3 text-sm text-green-700 space-y-1'},
                                     React.createElement('div', {className: 'flex justify-between'},
                                         React.createElement('span', null, 'CMR Contingency'),
-                                        React.createElement('span', {className: 'font-semibold'}, `$${column.values.cmr.toLocaleString()}`)
+                                        column.key === 'pendingCosts' ? renderHighlightValue(column.values.cmr, 'pendingCostsCmr', 'font-semibold') : React.createElement('span', {className: 'font-semibold'}, `$${column.values.cmr.toLocaleString()}`)
                                     ),
                                     React.createElement('div', {className: 'flex justify-between'},
                                         React.createElement('span', null, 'External Allowances'),
-                                        React.createElement('span', {className: 'font-semibold'}, `$${column.values.external.toLocaleString()}`)
+                                        column.key === 'pendingCosts' ? renderHighlightValue(column.values.external, 'pendingCostsExternal', 'font-semibold') : React.createElement('span', {className: 'font-semibold'}, `$${column.values.external.toLocaleString()}`)
                                     ),
                                     React.createElement('div', {className: 'flex justify-between'},
                                         React.createElement('span', null, 'Internal Allowances'),
-                                        React.createElement('span', {className: 'font-semibold'}, `$${column.values.internal.toLocaleString()}`)
+                                        column.key === 'pendingCosts' ? renderHighlightValue(column.values.internal, 'pendingCostsInternal', 'font-semibold') : React.createElement('span', {className: 'font-semibold'}, `$${column.values.internal.toLocaleString()}`)
                                     )
                                 )
                             )
@@ -4190,7 +4330,17 @@ const ExposureTab = ({ project, updateProject }) => {
                     )
                 )
             ),
-            React.createElement('div', {className: 'text-sm text-gray-500 mt-2'}, `Items: ${exposureCosts.length}`),
+            React.createElement('div', {className: 'mt-3 flex flex-wrap items-center gap-3 text-sm'},
+                React.createElement('div', {className: 'text-gray-500'}, `Items: ${exposureCosts.length}`),
+                activeHighlight && highlightDefinitions[activeHighlight] && React.createElement('div', {className: 'inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-blue-700'},
+                    React.createElement('span', null, `Highlighting: ${highlightDefinitions[activeHighlight].label}`),
+                    React.createElement('button', {
+                        type: 'button',
+                        onClick: () => setActiveHighlight(null),
+                        className: 'font-semibold text-blue-700 hover:text-blue-900'
+                    }, 'Clear')
+                )
+            ),
         ),
 
         React.createElement('div', {className: 'bg-white rounded-lg shadow p-4'},
