@@ -1208,10 +1208,12 @@ const NotesModal = ({
     notes, 
     onAddNote, 
     onDeleteNote,
-    // New props for linked costs
+    // Props for linked notes
     project,
     linkedCosts = [],
-    linkType
+    linkedItems = [],
+    linkType,
+    linkedTabLabel
 }) => {
     const [newNote, setNewNote] = useState('');
     const [activeTab, setActiveTab] = useState('item');
@@ -1234,6 +1236,14 @@ const NotesModal = ({
         return `${cost.subcontractor} - ${cost.submittedCONumber || cost.contractChangeNumber || 'No Number'}`;
     };
 
+    const hasLinkedCosts = linkedCosts && linkedCosts.length > 0;
+    const hasLinkedItems = linkedItems && linkedItems.length > 0;
+    const hasLinkedNotesTab = hasLinkedCosts || hasLinkedItems;
+    const resolvedLinkedTabLabel = linkedTabLabel || (hasLinkedCosts ? 'Linked Cost Notes' : 'Linked Item Notes');
+    const linkedNotesCount = hasLinkedCosts
+        ? linkedCosts.reduce((sum, cost) => sum + getLinkedCostNotes(cost.id).length, 0)
+        : linkedItems.reduce((sum, item) => sum + ((item.notes || []).length), 0);
+
     if (!isOpen) return null;
 
     return React.createElement('div', { className: "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" },
@@ -1247,7 +1257,7 @@ const NotesModal = ({
             ),
             
             // Tab Navigation
-            linkedCosts && linkedCosts.length > 0 && React.createElement('div', { className: "border-b" },
+            hasLinkedNotesTab && React.createElement('div', { className: "border-b" },
                 React.createElement('nav', { className: "-mb-px flex space-x-8 px-6" },
                     React.createElement('button', {
                         onClick: () => setActiveTab('item'),
@@ -1264,7 +1274,7 @@ const NotesModal = ({
                                 ? 'border-blue-500 text-blue-600' 
                                 : 'border-transparent text-gray-500 hover:text-gray-700'
                         }`
-                    }, `Linked Cost Notes (${linkedCosts.reduce((sum, cost) => sum + getLinkedCostNotes(cost.id).length, 0)})`)
+                    }, `${resolvedLinkedTabLabel} (${linkedNotesCount})`)
                 )
             ),
 
@@ -1319,10 +1329,9 @@ const NotesModal = ({
                     )
                 ),
 
-                // Linked Costs Notes Tab
+                // Linked Costs / Items Notes Tab
                 activeTab === 'costs' && React.createElement('div', null,
-                    linkedCosts.length === 0 ? 
-                        React.createElement('p', { className: "text-gray-500 italic" }, "No linked costs.") :
+                    hasLinkedCosts ?
                         React.createElement('div', { className: "space-y-6" },
                             linkedCosts.map(cost => {
                                 const costNotes = getLinkedCostNotes(cost.id);
@@ -1364,7 +1373,43 @@ const NotesModal = ({
                                     "To add notes to specific costs, go to the Subcontractor Costs tab."
                                 )
                             )
-                        ),
+                        ) : hasLinkedItems ?
+                        React.createElement('div', { className: "space-y-6" },
+                            linkedItems.map(item => {
+                                const itemNotes = item.notes || [];
+                                return React.createElement('div', {
+                                    key: `${item.type}-${item.id}`,
+                                    className: "border border-gray-200 rounded-lg p-4"
+                                },
+                                    React.createElement('div', { className: "flex justify-between items-center mb-4 pb-2 border-b border-gray-100" },
+                                        React.createElement('div', null,
+                                            React.createElement('h4', { className: "font-medium text-gray-900" }, item.title),
+                                            item.description && React.createElement('p', { className: "text-sm text-gray-600" }, item.description),
+                                            item.meta && React.createElement('p', { className: "text-sm font-medium text-gray-900" }, item.meta)
+                                        ),
+                                        React.createElement('span', {
+                                            className: "text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded"
+                                        }, `${itemNotes.length} note${itemNotes.length === 1 ? '' : 's'}`)
+                                    ),
+                                    React.createElement('div', { className: "space-y-3" },
+                                        itemNotes.length === 0 ?
+                                            React.createElement('p', { className: "text-gray-400 italic text-sm" }, item.emptyMessage || "No notes on this linked item.") :
+                                            itemNotes.map(note =>
+                                                React.createElement('div', {
+                                                    key: note.id,
+                                                    className: "bg-yellow-50 p-3 rounded border-l-4 border-yellow-400"
+                                                },
+                                                    React.createElement('p', { className: "text-gray-900 text-sm mb-1" }, note.content),
+                                                    React.createElement('p', { className: "text-xs text-gray-500" },
+                                                        formatNoteMeta(note)
+                                                    )
+                                                )
+                                            )
+                                    )
+                                );
+                            })
+                        ) :
+                        React.createElement('p', { className: "text-gray-500 italic" }, "No linked items."),
                     React.createElement('div', { className: "flex justify-end pt-6" },
                         React.createElement('button', {
                             type: "button",
@@ -1642,6 +1687,73 @@ const addSubcontractorCost = (cost) => {
         return project.subcontractorCostNotes?.filter(note => note.itemId === itemId) || [];
     };
 
+    const getLinkedItemNotes = (linkedType, linkedId) => {
+        if (!linkedType || !linkedId || linkedType === 'no-cost') return [];
+
+        const notesByType = {
+            'change-order': project.changeOrderNotes || [],
+            'allowance': project.allowanceConsumptionNotes || [],
+            'cmr': project.cmrConsumptionNotes || []
+        };
+
+        return (notesByType[linkedType] || []).filter(note => note.itemId === linkedId);
+    };
+
+    const getLinkedItemContext = (cost) => {
+        if (!cost?.linkedType || !cost?.linkedId || cost.linkedType === 'no-cost') return [];
+
+        if (cost.linkedType === 'change-order') {
+            const changeOrder = project.ownerChangeOrders.find(item => item.id === cost.linkedId);
+            if (!changeOrder) return [];
+
+            return [{
+                type: cost.linkedType,
+                id: changeOrder.id,
+                title: `CO ${changeOrder.number} - ${changeOrder.description}`,
+                description: changeOrder.requestedBy || '',
+                meta: changeOrder.amount ? `$${changeOrder.amount.toLocaleString()}` : '',
+                notes: getLinkedItemNotes(cost.linkedType, cost.linkedId),
+                emptyMessage: 'No notes on this owner change order.'
+            }];
+        }
+
+        if (cost.linkedType === 'allowance') {
+            const consumption = project.allowanceConsumptions.find(item => item.id === cost.linkedId);
+            if (!consumption) return [];
+
+            return [{
+                type: cost.linkedType,
+                id: consumption.id,
+                title: `${consumption.number} - ${consumption.description}`,
+                description: (project.allowances || []).find(item => item.id === consumption.allowanceId)?.name || '',
+                meta: consumption.amount ? `$${consumption.amount.toLocaleString()}` : '',
+                notes: getLinkedItemNotes(cost.linkedType, cost.linkedId),
+                emptyMessage: 'No notes on this allowance consumption.'
+            }];
+        }
+
+        if (cost.linkedType === 'cmr') {
+            const consumption = project.cmrConsumptions.find(item => item.id === cost.linkedId);
+            if (!consumption) return [];
+
+            return [{
+                type: cost.linkedType,
+                id: consumption.id,
+                title: `CMR ${consumption.number} - ${consumption.description}`,
+                description: (project.cmrBudgets || []).find(item => item.id === consumption.cmrBudgetId)?.name || '',
+                meta: consumption.amount ? `$${consumption.amount.toLocaleString()}` : '',
+                notes: getLinkedItemNotes(cost.linkedType, cost.linkedId),
+                emptyMessage: 'No notes on this CMR consumption.'
+            }];
+        }
+
+        return [];
+    };
+
+    const costHasAnyNotes = (cost) => {
+        return getItemNotes(cost.id).length > 0 || getLinkedItemNotes(cost.linkedType, cost.linkedId).length > 0;
+    };
+
     const addNote = (itemId, content) => {
         const newNote = buildNote(itemId, content, getSavedNoteAuthor());
         
@@ -1857,7 +1969,7 @@ const addSubcontractorCost = (cost) => {
                             React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2"},
                                 React.createElement('button', {
                                     onClick: () => openNotesModal(cost.id, `${cost.subcontractor} - ${cost.description}`),
-                                    className: `p-1 rounded ${getItemNotes(cost.id).length > 0 ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900`
+                                    className: `p-1 rounded ${costHasAnyNotes(cost) ? 'text-blue-600 bg-blue-50' : 'text-gray-400'} hover:text-blue-900`
                                 }, React.createElement(MessageSquare)),
                                 React.createElement('button', {
                                     onClick: () => setEditingCost(cost),
@@ -1903,7 +2015,10 @@ const addSubcontractorCost = (cost) => {
             title: notesModal.title,
             notes: notesModal.itemId ? getItemNotes(notesModal.itemId) : [],
             onAddNote: (content) => addNote(notesModal.itemId, content),
-            onDeleteNote: deleteNote
+            onDeleteNote: deleteNote,
+            linkedItems: notesModal.itemId ? getLinkedItemContext(project.subcontractorCosts.find(cost => cost.id === notesModal.itemId)) : [],
+            linkedTabLabel: 'Linked Item Notes',
+            linkType: 'subcontractor-cost'
         }),
 
         React.createElement(FilesModal, {
