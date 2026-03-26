@@ -2232,6 +2232,7 @@ const updateStatusDate = () => {
             const [statusHistoryModal, setStatusHistoryModal] = useState({ isOpen: false, changeOrder: null });
             const [filesModal, setFilesModal] = useState({ isOpen: false, cost: null, files: [] });
             const [loadingFiles, setLoadingFiles] = useState(false);
+            const [costAmountModal, setCostAmountModal] = useState({ isOpen: false, cost: null, value: '' });
 
             const setCostOverrideField = (coId, field, value) => {
                 const parsed = parseFloat(value);
@@ -2349,6 +2350,41 @@ const updateChangeOrder = (updatedCO) => {
                     ...project,
                     ownerChangeOrders: project.ownerChangeOrders.filter(co => co.id !== id)
                 });
+            };
+
+            const openCostAmountModal = (cost) => {
+                setCostAmountModal({
+                    isOpen: true,
+                    cost,
+                    value: typeof cost.amount === 'number' ? cost.amount.toString() : ''
+                });
+            };
+
+            const closeCostAmountModal = () => {
+                setCostAmountModal({ isOpen: false, cost: null, value: '' });
+            };
+
+            const saveCostAmount = () => {
+                if (!costAmountModal.cost) return;
+
+                const trimmedValue = costAmountModal.value.trim();
+                const nextAmount = trimmedValue === '' ? null : parseFloat(trimmedValue);
+
+                if (trimmedValue !== '' && Number.isNaN(nextAmount)) {
+                    alert('Please enter a valid number.');
+                    return;
+                }
+
+                updateProject({
+                    ...project,
+                    subcontractorCosts: project.subcontractorCosts.map(cost =>
+                        cost.id === costAmountModal.cost.id
+                            ? { ...cost, amount: nextAmount === null ? null : Math.round(nextAmount * 100) / 100 }
+                            : cost
+                    )
+                });
+
+                closeCostAmountModal();
             };
 
             const toggleExpanded = (id) => {
@@ -2827,7 +2863,11 @@ React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-
             React.createElement('span', null, `${cost.submittedCONumber || cost.contractChangeNumber || 'No Number'} - ${cost.subcontractor} - ${cost.description}`)
         ),
         React.createElement('div', {className: "flex items-center space-x-3"},
-            React.createElement('span', null, cost.amount ? `$${cost.amount.toLocaleString()}` : 'Pending'),
+            React.createElement('button', {
+                type: "button",
+                onClick: () => openCostAmountModal(cost),
+                className: "px-2 py-1 rounded-md border border-transparent text-blue-700 hover:text-blue-900 hover:border-blue-200 hover:bg-blue-50 transition-colors"
+            }, cost.amount ? `$${cost.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Pending'),
             cost.files && cost.files.length > 0 ? 
                 React.createElement('button', {
                     onClick: () => openFilesModal(cost),
@@ -3005,7 +3045,6 @@ editingCO && React.createElement(Modal, {
             onDeleteFile: handleDeleteFileFromModal,
             formatFileSize: formatFileSize
         }),
-
         React.createElement(StatusHistoryModal, {
             isOpen: statusHistoryModal.isOpen,
             onClose: closeStatusHistoryModal,
@@ -3013,7 +3052,46 @@ editingCO && React.createElement(Modal, {
             statusHistory: statusHistoryModal.changeOrder ? getStatusHistory(statusHistoryModal.changeOrder.id) : [],
             project: project,
             updateProject: updateProject
-        })
+        }),
+
+        costAmountModal.isOpen && React.createElement(Modal, {
+            onClose: closeCostAmountModal,
+            title: "Update Subcontractor Cost"
+        }, React.createElement('form', {
+            className: "space-y-4",
+            onSubmit: (e) => {
+                e.preventDefault();
+                saveCostAmount();
+            }
+        },
+            React.createElement('p', { className: "text-sm text-gray-600" },
+                `${costAmountModal.cost?.submittedCONumber || costAmountModal.cost?.contractChangeNumber || 'No Number'} - ${costAmountModal.cost?.subcontractor || ''}`
+            ),
+            React.createElement('div', null,
+                React.createElement('label', { className: "block text-sm font-medium text-gray-700 mb-1" }, "Amount"),
+                React.createElement('input', {
+                    type: "number",
+                    step: "0.01",
+                    value: costAmountModal.value,
+                    onChange: (e) => setCostAmountModal(prev => ({ ...prev, value: e.target.value })),
+                    className: "w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500",
+                    placeholder: "Leave blank for pending",
+                    autoFocus: true
+                }),
+                React.createElement('p', { className: "mt-1 text-xs text-gray-500" }, "Clear the field to set this cost back to Pending.")
+            ),
+            React.createElement('div', { className: "flex justify-end gap-3 pt-2" },
+                React.createElement('button', {
+                    type: "button",
+                    onClick: closeCostAmountModal,
+                    className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                }, "Cancel"),
+                React.createElement('button', {
+                    type: "submit",
+                    className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                }, "Save")
+            )
+        ))
     );
 };
 
