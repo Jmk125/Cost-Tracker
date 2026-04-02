@@ -1530,14 +1530,19 @@ const SubcontractorCostsTab = ({ project, updateProject }) => {
     };
 
 const addSubcontractorCost = (cost) => {
+    const noteContent = cost.initialNote?.trim();
+    const { initialNote, ...costWithoutInitialNote } = cost;
     const newCost = {
-        ...cost,
+        ...costWithoutInitialNote,
         id: cost.id || Date.now(), // Use the ID from the form (temp ID) or generate new one
         dateAdded: new Date().toISOString().split('T')[0]
     };
     updateProject({
         ...project,
-        subcontractorCosts: [...project.subcontractorCosts, newCost]
+        subcontractorCosts: [...project.subcontractorCosts, newCost],
+        subcontractorCostNotes: noteContent
+            ? [...(project.subcontractorCostNotes || []), buildNote(newCost.id, noteContent, getSavedNoteAuthor())]
+            : (project.subcontractorCostNotes || [])
     });
     setShowForm(false);
 };
@@ -5330,6 +5335,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
         dateSubmitted: cost?.dateSubmitted || '',
         amount: cost?.amount || '',
         description: cost?.description || '',
+        initialNote: '',
         additionalWorkTicket: cost?.additionalWorkTicket || '',
         linkedType: cost?.linkedType || '',
         linkedId: cost?.linkedId || '',
@@ -5342,6 +5348,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
     const [uploadProgress, setUploadProgress] = useState(0);
     const [tempCostId] = useState(cost?.id || `temp_${Date.now()}`);
     const [isDragOver, setIsDragOver] = useState(false);
+    const [activeFormTab, setActiveFormTab] = useState('details');
 
     // Auto-update submitted CO number when subcontractor changes
     React.useEffect(() => {
@@ -5476,13 +5483,17 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
 
     const handleSubmit = (e) => {
         e.preventDefault();
+
+        const trimmedInitialNote = formData.initialNote?.trim() || '';
+        const { initialNote, ...formDataWithoutInitialNote } = formData;
         
         // Create the final cost object with file metadata
         const finalCost = {
-            ...formData,
-            amount: formData.amount ? parseFloat(formData.amount) : null,
+            ...formDataWithoutInitialNote,
+            amount: formDataWithoutInitialNote.amount ? parseFloat(formDataWithoutInitialNote.amount) : null,
             files: uploadedFiles,
-            id: cost?.id || tempCostId // Ensure we use the temp ID for new costs
+            id: cost?.id || tempCostId, // Ensure we use the temp ID for new costs
+            initialNote: trimmedInitialNote
         };
         
         onSubmit(finalCost);
@@ -5516,6 +5527,30 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
     };
 
     return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
+        React.createElement('div', { className: "border-b border-gray-200" },
+            React.createElement('nav', { className: "-mb-px flex space-x-6" },
+                React.createElement('button', {
+                    type: "button",
+                    onClick: () => setActiveFormTab('details'),
+                    className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                        activeFormTab === 'details'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`
+                }, "Cost Details"),
+                React.createElement('button', {
+                    type: "button",
+                    onClick: () => setActiveFormTab('notes'),
+                    className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                        activeFormTab === 'notes'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`
+                }, "Note")
+            )
+        ),
+
+        activeFormTab === 'details' && React.createElement(React.Fragment, null,
         React.createElement('div', null,
             React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Subcontractor"),
             React.createElement('select', {
@@ -5718,6 +5753,35 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
                 className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700",
                 disabled: isUploading
             }, cost ? 'Update' : 'Add', " Cost Entry")
+        )
+        ),
+
+        activeFormTab === 'notes' && React.createElement(React.Fragment, null,
+            React.createElement('div', null,
+                React.createElement('label', { className: "block text-sm font-medium text-gray-700" }, "Cost Note"),
+                React.createElement('textarea', {
+                    value: formData.initialNote || '',
+                    onChange: (e) => setFormData({...formData, initialNote: e.target.value}),
+                    className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                    rows: "6",
+                    placeholder: cost
+                        ? "Use the note button on the cost row to add new timestamped notes."
+                        : "Add the same note you would normally enter from the cost note button."
+                }),
+                React.createElement('p', { className: "mt-2 text-xs text-gray-500" },
+                    cost
+                        ? "This tab is available when adding a new cost. Existing costs can still use the note button."
+                        : "When you save this cost, this text is added as the regular cost note."
+                )
+            ),
+            React.createElement('div', {className: "flex justify-end space-x-3"},
+                React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
+                React.createElement('button', {
+                    type: "submit", 
+                    className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700",
+                    disabled: isUploading
+                }, cost ? 'Update' : 'Add', " Cost Entry")
+            )
         )
     );
 };
