@@ -5825,6 +5825,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
         itemNumber: changeOrder?.itemNumber || (changeOrder ? changeOrder.itemNumber : getNextItemNumber()),
         number: changeOrder?.number || '',
         description: changeOrder?.description || '',
+        initialNote: '',
         status: changeOrder?.status || 'pending',
         statusDate: changeOrder?.statusDate || new Date().toISOString().split('T')[0],
         dateAdded: changeOrder?.dateAdded || today,
@@ -5843,6 +5844,7 @@ const SubcontractorCostForm = ({ project, cost, onSubmit, onCancel, linkableItem
 
     const [linkedCosts, setLinkedCosts] = useState(getLinkedCosts());
     const [editingLinkedCost, setEditingLinkedCost] = useState(null);
+    const [activeFormTab, setActiveFormTab] = useState('details');
 
     const getLinkableItems = () => {
         const items = [];
@@ -5926,10 +5928,12 @@ const addStatusHistoryEntry = (coId, status, statusDate) => {
 
 const handleSubmit = (e) => {
     e.preventDefault();
+    const trimmedInitialNote = formData.initialNote?.trim() || '';
+    const { initialNote, ...formDataWithoutInitialNote } = formData;
     
     // Create the change order first
     const coId = changeOrder?.id || Date.now();
-    const newOrUpdatedCO = { ...(changeOrder || {}), ...formData, id: coId };
+    const newOrUpdatedCO = { ...(changeOrder || {}), ...formDataWithoutInitialNote, id: coId };
     
     // Check if status changed (for existing change orders)
     const statusChanged = changeOrder && changeOrder.status !== formData.status;
@@ -5979,7 +5983,10 @@ const handleSubmit = (e) => {
             project.ownerChangeOrders.map(co => co.id === changeOrder.id ? newOrUpdatedCO : co) :
             [...project.ownerChangeOrders, newOrUpdatedCO],
         subcontractorCosts: [...updatedCosts, ...newCosts],
-        changeOrderStatusHistory: updatedStatusHistory
+        changeOrderStatusHistory: updatedStatusHistory,
+        changeOrderNotes: (!changeOrder && trimmedInitialNote)
+            ? [...(project.changeOrderNotes || []), buildNote(coId, trimmedInitialNote, getSavedNoteAuthor())]
+            : (project.changeOrderNotes || [])
     };
     
     updateProject(updatedProject);
@@ -5988,6 +5995,30 @@ const handleSubmit = (e) => {
     // Rest of the form JSX stays the same...
     return React.createElement(React.Fragment, null,
         React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
+        React.createElement('div', { className: "border-b border-gray-200" },
+            React.createElement('nav', { className: "-mb-px flex space-x-6" },
+                React.createElement('button', {
+                    type: "button",
+                    onClick: () => setActiveFormTab('details'),
+                    className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                        activeFormTab === 'details'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`
+                }, "Change Order Details"),
+                React.createElement('button', {
+                    type: "button",
+                    onClick: () => setActiveFormTab('notes'),
+                    className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                        activeFormTab === 'notes'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`
+                }, "Note")
+            )
+        ),
+
+        activeFormTab === 'details' && React.createElement(React.Fragment, null,
         React.createElement('div', {className: "grid grid-cols-2 gap-4"},
             React.createElement('div', null,
                 React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Item Number"),
@@ -6095,6 +6126,31 @@ const handleSubmit = (e) => {
             defaultDescription: formData.description,
             onCostNavigate: setEditingLinkedCost
         })
+        ),
+
+        activeFormTab === 'notes' && React.createElement(React.Fragment, null,
+            React.createElement('div', null,
+                React.createElement('label', { className: "block text-sm font-medium text-gray-700" }, "Change Order Note"),
+                React.createElement('textarea', {
+                    value: formData.initialNote || '',
+                    onChange: (e) => setFormData({...formData, initialNote: e.target.value}),
+                    className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                    rows: "6",
+                    placeholder: changeOrder
+                        ? "Use the note button on the row to add new timestamped notes."
+                        : "Add the same note you would normally enter from the note button."
+                }),
+                React.createElement('p', { className: "mt-2 text-xs text-gray-500" },
+                    changeOrder
+                        ? "This tab is available when adding a new change order. Existing records can still use the note button."
+                        : "When you save this change order, this text is added as the regular change order note."
+                )
+            ),
+            React.createElement('div', {className: "flex justify-end space-x-3"},
+                React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
+                React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, changeOrder ? 'Update' : 'Add', " Change Order")
+            )
+        )
     ),
 
     editingLinkedCost && React.createElement(Modal, {
@@ -6185,6 +6241,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
         allowanceId: consumption?.allowanceId || '',
         number: consumption?.number || '',
         description: consumption?.description || '',
+        initialNote: '',
         status: consumption?.status || (project.isOfcc ? 'pending' : 'approved'),
         ...consumption
     });
@@ -6198,15 +6255,18 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
     };
 
     const [linkedCosts, setLinkedCosts] = useState(getLinkedCosts());
+    const [activeFormTab, setActiveFormTab] = useState('details');
 
     const handleSubmit = (e) => {
         e.preventDefault();
+        const trimmedInitialNote = formData.initialNote?.trim() || '';
+        const { initialNote, ...formDataWithoutInitialNote } = formData;
         
         // Create the consumption first
         const consumptionId = consumption?.id || Date.now();
         const newOrUpdatedConsumption = { 
-            ...formData, 
-            allowanceId: parseInt(formData.allowanceId), 
+            ...formDataWithoutInitialNote, 
+            allowanceId: parseInt(formDataWithoutInitialNote.allowanceId), 
             id: consumptionId 
         };
         
@@ -6240,7 +6300,10 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             allowanceConsumptions: consumption ? 
                 project.allowanceConsumptions.map(c => c.id === consumption.id ? newOrUpdatedConsumption : c) :
                 [...project.allowanceConsumptions, newOrUpdatedConsumption],
-            subcontractorCosts: [...updatedCosts, ...newCosts]
+            subcontractorCosts: [...updatedCosts, ...newCosts],
+            allowanceConsumptionNotes: (!consumption && trimmedInitialNote)
+                ? [...(project.allowanceConsumptionNotes || []), buildNote(consumptionId, trimmedInitialNote, getSavedNoteAuthor())]
+                : (project.allowanceConsumptionNotes || [])
         };
         
         updateProject(updatedProject);
@@ -6248,6 +6311,30 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
     };
 
     return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
+        React.createElement('div', { className: "border-b border-gray-200" },
+            React.createElement('nav', { className: "-mb-px flex space-x-6" },
+                React.createElement('button', {
+                    type: "button",
+                    onClick: () => setActiveFormTab('details'),
+                    className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                        activeFormTab === 'details'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`
+                }, "Consumption Details"),
+                React.createElement('button', {
+                    type: "button",
+                    onClick: () => setActiveFormTab('notes'),
+                    className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                        activeFormTab === 'notes'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    }`
+                }, "Note")
+            )
+        ),
+
+        activeFormTab === 'details' && React.createElement(React.Fragment, null,
         React.createElement('div', null,
             React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Allowance"),
             React.createElement('select', {
@@ -6311,6 +6398,31 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             onCostsChange: setLinkedCosts,
             updateProject: updateProject
         })
+        ),
+
+        activeFormTab === 'notes' && React.createElement(React.Fragment, null,
+            React.createElement('div', null,
+                React.createElement('label', { className: "block text-sm font-medium text-gray-700" }, "Consumption Note"),
+                React.createElement('textarea', {
+                    value: formData.initialNote || '',
+                    onChange: (e) => setFormData({...formData, initialNote: e.target.value}),
+                    className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                    rows: "6",
+                    placeholder: consumption
+                        ? "Use the note button on the row to add new timestamped notes."
+                        : "Add the same note you would normally enter from the note button."
+                }),
+                React.createElement('p', { className: "mt-2 text-xs text-gray-500" },
+                    consumption
+                        ? "This tab is available when adding a new consumption. Existing records can still use the note button."
+                        : "When you save this consumption, this text is added as the regular consumption note."
+                )
+            ),
+            React.createElement('div', {className: "flex justify-end space-x-3"},
+                React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
+                React.createElement('button', {type: "submit", className: "px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"}, consumption ? 'Update' : 'Add', " Consumption")
+            )
+        )
     );
 };
         const CMRBudgetForm = ({ budgetItem, onSubmit, onCancel, isOfcc }) => {
@@ -6374,6 +6486,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 number: consumption?.number || '',
                 description: consumption?.description || '',
                 cmrBudgetId: consumption?.cmrBudgetId || availableBudgets[0]?.id || '',
+                initialNote: '',
                 status: consumption?.status || (project.isOfcc ? 'pending' : 'approved'),
                 ...consumption
             });
@@ -6384,14 +6497,17 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             };
 
             const [linkedCosts, setLinkedCosts] = useState(getLinkedCosts());
+            const [activeFormTab, setActiveFormTab] = useState('details');
 
             const handleSubmit = (e) => {
                 e.preventDefault();
+                const trimmedInitialNote = formData.initialNote?.trim() || '';
+                const { initialNote, ...formDataWithoutInitialNote } = formData;
                 const consumptionId = consumption?.id || Date.now();
                 const newOrUpdatedConsumption = {
-                    ...formData,
+                    ...formDataWithoutInitialNote,
                     id: consumptionId,
-                    cmrBudgetId: formData.cmrBudgetId ? String(formData.cmrBudgetId) : ''
+                    cmrBudgetId: formDataWithoutInitialNote.cmrBudgetId ? String(formDataWithoutInitialNote.cmrBudgetId) : ''
                 };
 
                 const updatedCosts = project.subcontractorCosts.map(cost => {
@@ -6409,12 +6525,38 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                     cmrConsumptions: consumption
                         ? project.cmrConsumptions.map(c => c.id === consumption.id ? newOrUpdatedConsumption : c)
                         : [...project.cmrConsumptions, newOrUpdatedConsumption],
-                    subcontractorCosts: [...updatedCosts, ...newCosts]
+                    subcontractorCosts: [...updatedCosts, ...newCosts],
+                    cmrConsumptionNotes: (!consumption && trimmedInitialNote)
+                        ? [...(project.cmrConsumptionNotes || []), buildNote(consumptionId, trimmedInitialNote, getSavedNoteAuthor())]
+                        : (project.cmrConsumptionNotes || [])
                 });
                 onSubmit(newOrUpdatedConsumption);
             };
 
             return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-4"},
+                React.createElement('div', { className: "border-b border-gray-200" },
+                    React.createElement('nav', { className: "-mb-px flex space-x-6" },
+                        React.createElement('button', {
+                            type: "button",
+                            onClick: () => setActiveFormTab('details'),
+                            className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                                activeFormTab === 'details'
+                                    ? 'border-blue-500 text-blue-600'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                            }`
+                        }, "Consumption Details"),
+                        React.createElement('button', {
+                            type: "button",
+                            onClick: () => setActiveFormTab('notes'),
+                            className: `pb-2 px-1 text-sm font-medium border-b-2 ${
+                                activeFormTab === 'notes'
+                                    ? 'border-blue-500 text-blue-600'
+                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                            }`
+                        }, "Note")
+                    )
+                ),
+                activeFormTab === 'details' && React.createElement(React.Fragment, null,
                 React.createElement('div', null,
                     React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Consumption Number"),
                     React.createElement('input', {
@@ -6468,6 +6610,30 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                     onCostsChange: setLinkedCosts,
                     updateProject: updateProject
                 })
+                ),
+                activeFormTab === 'notes' && React.createElement(React.Fragment, null,
+                    React.createElement('div', null,
+                        React.createElement('label', { className: "block text-sm font-medium text-gray-700" }, "Consumption Note"),
+                        React.createElement('textarea', {
+                            value: formData.initialNote || '',
+                            onChange: (e) => setFormData({...formData, initialNote: e.target.value}),
+                            className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                            rows: "6",
+                            placeholder: consumption
+                                ? "Use the note button on the row to add new timestamped notes."
+                                : "Add the same note you would normally enter from the note button."
+                        }),
+                        React.createElement('p', { className: "mt-2 text-xs text-gray-500" },
+                            consumption
+                                ? "This tab is available when adding a new consumption. Existing records can still use the note button."
+                                : "When you save this consumption, this text is added as the regular consumption note."
+                        )
+                    ),
+                    React.createElement('div', {className: "flex justify-end space-x-3"},
+                        React.createElement('button', {type: "button", onClick: onCancel, className: "px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"}, "Cancel"),
+                        React.createElement('button', {type: "submit", disabled: !availableBudgets.length, className: `px-4 py-2 text-white rounded-md ${!availableBudgets.length ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}, consumption ? 'Update Consumption' : 'Add Consumption')
+                    )
+                )
             );
         };
 
