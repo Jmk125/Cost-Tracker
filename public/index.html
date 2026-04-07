@@ -2647,9 +2647,21 @@ const handleGeneratePDF = async (changeOrder) => {
                 });
 
                 if (sortField) {
+                    const getSortValue = (co, field) => {
+                        if (field === 'subAmount') {
+                            return getLinkedCosts(co.id).reduce((sum, cost) => sum + (cost.amount || 0), 0);
+                        }
+
+                        if (field === 'totalAmount') {
+                            return calculateCOTotal(co.id);
+                        }
+
+                        return co[field] || '';
+                    };
+
                     filtered.sort((a, b) => {
-                        let aVal = a[sortField] || '';
-                        let bVal = b[sortField] || '';
+                        const aVal = getSortValue(a, sortField);
+                        const bVal = getSortValue(b, sortField);
                         
                         if (sortDirection === 'asc') {
                             return aVal > bVal ? 1 : -1;
@@ -2833,8 +2845,14 @@ const handleGeneratePDF = async (changeOrder) => {
                                 }, "Date Added", sortField === 'dateAdded' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Sub Due"),
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Our Due"),
-                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Sub Amount"),
-                                React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Total Amount"),
+                                React.createElement('th', {
+                                    className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100",
+                                    onClick: () => handleSort('subAmount')
+                                }, "Sub Amount", sortField === 'subAmount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
+                                React.createElement('th', {
+                                    className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100",
+                                    onClick: () => handleSort('totalAmount')
+                                }, "Total Amount", sortField === 'totalAmount' && (sortDirection === 'asc' ? ' ↑' : ' ↓')),
                                 React.createElement('th', {className: "px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"}, "Actions")
                             )
                         ),
