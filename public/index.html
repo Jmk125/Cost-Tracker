@@ -259,6 +259,16 @@
             { value: 'internal', label: 'Internal' }
         ];
 
+        const CHANGE_ORDER_STATUS_OPTIONS = [
+            { value: 'pending', label: 'Pending' },
+            { value: 'awaiting-direction', label: 'Awaiting Direction' },
+            { value: 'submitted-ae', label: 'Submitted to A/E' },
+            { value: 'submitted-district', label: 'Submitted to District' },
+            { value: 'approved', label: 'Approved' },
+            { value: 'rejected', label: 'Rejected' },
+            { value: 'void', label: 'VOID' }
+        ];
+
         const getApprovalStatusLabel = (status) => {
             const statusMap = {
                 pending: 'Pending',
@@ -2231,7 +2241,7 @@ const updateStatusDate = () => {
             const [filters, setFilters] = useState({
                 number: '',
                 description: '',
-                status: ''
+                statuses: CHANGE_ORDER_STATUS_OPTIONS.map(option => option.value)
             });
             const [sortField, setSortField] = useState('');
             const [sortDirection, setSortDirection] = useState('asc');
@@ -2603,11 +2613,36 @@ const handleGeneratePDF = async (changeOrder) => {
                 return calculateCostBreakdown(project, subTotal, changeOrder).totalAmount;
             };
 
+            const toggleStatusFilter = (statusValue) => {
+                setFilters(prev => {
+                    const isSelected = prev.statuses.includes(statusValue);
+                    const nextStatuses = isSelected
+                        ? prev.statuses.filter(value => value !== statusValue)
+                        : [...prev.statuses, statusValue];
+
+                    return { ...prev, statuses: nextStatuses };
+                });
+            };
+
+            const setAllStatuses = () => {
+                setFilters(prev => ({
+                    ...prev,
+                    statuses: CHANGE_ORDER_STATUS_OPTIONS.map(option => option.value)
+                }));
+            };
+
+            const clearAllStatuses = () => {
+                setFilters(prev => ({
+                    ...prev,
+                    statuses: []
+                }));
+            };
+
             const getFilteredAndSortedCOs = () => {
                 let filtered = project.ownerChangeOrders.filter(co => {
                     if (filters.number && !co.number.toLowerCase().includes(filters.number.toLowerCase())) return false;
                     if (filters.description && !co.description.toLowerCase().includes(filters.description.toLowerCase())) return false;
-                    if (filters.status && co.status !== filters.status) return false;
+                    if (!filters.statuses.includes(co.status)) return false;
                     return true;
                 });
 
@@ -2725,20 +2760,44 @@ const handleGeneratePDF = async (changeOrder) => {
                         ),
                         React.createElement('div', null,
                             React.createElement('label', {className: "block text-xs text-gray-500 mb-1"}, "Status"),
-                            React.createElement('select', {
-                                value: filters.status,
-                                onChange: (e) => setFilters({...filters, status: e.target.value}),
-                                className: "w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                            },
-                                React.createElement('option', {value: ""}, "All"),
-                                React.createElement('option', {value: ""}, "All"),
-                                React.createElement('option', {value: "pending"}, "Pending"),
-                                React.createElement('option', {value: "awaiting-direction"}, "Awaiting Direction"),
-                                React.createElement('option', {value: "submitted-ae"}, "Submitted to A/E"),
-                                React.createElement('option', {value: "submitted-district"}, "Submitted to District"),
-                                React.createElement('option', {value: "approved"}, "Approved"),
-                                React.createElement('option', {value: "rejected"}, "Rejected"),
-                                React.createElement('option', {value: "void"}, "VOID")
+                            React.createElement('details', { className: "relative" },
+                                React.createElement('summary', {
+                                    className: "w-full px-2 py-1 text-sm border border-gray-300 rounded bg-white cursor-pointer list-none select-none"
+                                },
+                                    filters.statuses.length === CHANGE_ORDER_STATUS_OPTIONS.length
+                                        ? 'All statuses selected'
+                                        : filters.statuses.length === 0
+                                            ? 'No statuses selected'
+                                            : `${filters.statuses.length} status${filters.statuses.length === 1 ? '' : 'es'} selected`
+                                ),
+                                React.createElement('div', { className: "absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded shadow-md p-2 space-y-2 max-h-56 overflow-y-auto" },
+                                    React.createElement('div', { className: "flex justify-between gap-2 pb-2 border-b border-gray-200" },
+                                        React.createElement('button', {
+                                            type: "button",
+                                            onClick: setAllStatuses,
+                                            className: "text-xs text-blue-600 hover:text-blue-800"
+                                        }, "Select all"),
+                                        React.createElement('button', {
+                                            type: "button",
+                                            onClick: clearAllStatuses,
+                                            className: "text-xs text-blue-600 hover:text-blue-800"
+                                        }, "Clear all")
+                                    ),
+                                    CHANGE_ORDER_STATUS_OPTIONS.map(option =>
+                                        React.createElement('label', {
+                                            key: option.value,
+                                            className: "flex items-center gap-2 text-sm text-gray-700 cursor-pointer"
+                                        },
+                                            React.createElement('input', {
+                                                type: "checkbox",
+                                                checked: filters.statuses.includes(option.value),
+                                                onChange: () => toggleStatusFilter(option.value),
+                                                className: "h-4 w-4"
+                                            }),
+                                            option.label
+                                        )
+                                    )
+                                )
                             )
                         )
                     )
