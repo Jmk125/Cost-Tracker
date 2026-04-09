@@ -2536,15 +2536,24 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             .replaceAll("'", '&#39;');
         const subcontractorLookup = {};
 
-        const buildRow = (cost, index) => {
+        const buildRow = (cost, index, isAdditional = false) => {
             const subcontractorKey = cost.subcontractor || '';
             const existing = defaultsBySubcontractor[subcontractorKey] || {};
             const safeSubcontractor = escapeHtml(subcontractorKey);
             const subId = `sub-${index}`;
             subcontractorLookup[subId] = subcontractorKey;
             return `
-                <tr>
+                <tr data-ofcc-row="true" data-row-id="${subId}">
                     <td class="px-3 py-2 border text-sm text-gray-900">${safeSubcontractor || 'Unknown'}</td>
+                    <td class="px-2 py-1 border"><input data-row-id="${subId}" data-field="subcontractor" type="text" value="${safeSubcontractor}" class="w-36 border rounded px-2 py-1" ${isAdditional ? '' : 'readonly'}></td>
+                    <td class="px-2 py-1 border">
+                        <select data-row-id="${subId}" data-field="tier" class="w-20 border rounded px-2 py-1">
+                            <option value="1" ${(existing.tier || 1) === 1 ? 'selected' : ''}>1</option>
+                            <option value="2" ${(existing.tier || 1) === 2 ? 'selected' : ''}>2</option>
+                            <option value="3" ${(existing.tier || 1) === 3 ? 'selected' : ''}>3</option>
+                        </select>
+                    </td>
+                    <td class="px-2 py-1 border"><input data-row-id="${subId}" data-field="parentSubcontractor" type="text" value="${existing.parentSubcontractor ?? ''}" class="w-36 border rounded px-2 py-1" placeholder="Parent sub name"></td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="labor" type="number" step="0.01" min="0" value="${existing.labor ?? ''}" class="w-28 border rounded px-2 py-1"></td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="fringes" type="number" step="0.01" min="0" value="${existing.fringes ?? ''}" class="w-28 border rounded px-2 py-1"></td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="payrollExpenses" type="number" step="0.01" min="0" value="${existing.payrollExpenses ?? ''}" class="w-28 border rounded px-2 py-1"></td>
@@ -2571,6 +2580,9 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                         <thead class="bg-gray-50 sticky top-0">
                             <tr>
                                 <th class="px-3 py-2 border text-left text-xs">Subcontractor</th>
+                                <th class="px-3 py-2 border text-left text-xs">Entry Sub</th>
+                                <th class="px-3 py-2 border text-left text-xs">Tier</th>
+                                <th class="px-3 py-2 border text-left text-xs">Parent Sub</th>
                                 <th class="px-3 py-2 border text-left text-xs">Labor</th>
                                 <th class="px-3 py-2 border text-left text-xs">Fringes</th>
                                 <th class="px-3 py-2 border text-left text-xs">Payroll Expenses</th>
@@ -2586,6 +2598,9 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                         </thead>
                         <tbody>${linkedCosts.map(buildRow).join('')}</tbody>
                     </table>
+                </div>
+                <div class="mt-2">
+                    <button id="ofcc-add-subtier" class="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-xs">+ Add Additional Tier Sub</button>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 p-3 bg-gray-50 rounded border">
                     <div class="text-sm"><span class="text-gray-600">Fee %:</span> <span class="font-semibold">${Number(project?.feePercentage || 0).toFixed(2)}%</span></div>
@@ -2609,12 +2624,22 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
 
         const calculateSummary = () => {
             const bySubcontractor = {};
-            modal.querySelectorAll('input[data-sub-id][data-field]').forEach((input) => {
-                const subcontractor = input.getAttribute('data-sub-id');
-                const field = input.getAttribute('data-field');
-                if (!bySubcontractor[subcontractor]) bySubcontractor[subcontractor] = {};
-                const parsed = parseFloat(input.value);
-                bySubcontractor[subcontractor][field] = Number.isNaN(parsed) ? 0 : roundCurrency(parsed);
+            modal.querySelectorAll('tr[data-ofcc-row]').forEach((rowEl) => {
+                const rowId = rowEl.getAttribute('data-row-id');
+                const subcontractorInput = rowEl.querySelector(`[data-row-id="${rowId}"][data-field="subcontractor"]`);
+                const tierInput = rowEl.querySelector(`[data-row-id="${rowId}"][data-field="tier"]`);
+                const parentInput = rowEl.querySelector(`[data-row-id="${rowId}"][data-field="parentSubcontractor"]`);
+                const subcontractor = subcontractorInput ? subcontractorInput.value.trim() : '';
+                bySubcontractor[rowId] = {
+                    subcontractor,
+                    tier: parseInt(tierInput?.value || '1', 10) || 1,
+                    parentSubcontractor: parentInput?.value?.trim() || ''
+                };
+                rowEl.querySelectorAll('input[data-sub-id][data-field], select[data-sub-id][data-field]').forEach((input) => {
+                    const field = input.getAttribute('data-field');
+                    const parsed = parseFloat(input.value);
+                    bySubcontractor[rowId][field] = Number.isNaN(parsed) ? 0 : roundCurrency(parsed);
+                });
             });
 
             const entries = Object.entries(bySubcontractor);
@@ -2631,7 +2656,12 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 generalConditionsBond: 0
             };
 
-            entries.forEach(([subcontractor, row]) => {
+            const rowsById = Object.fromEntries(entries);
+            let cascadingMarkupTotal = 0;
+            const computeRolledTotal = (rowId, depth = 0) => {
+                if (depth > 10) return 0;
+                const row = rowsById[rowId];
+                if (!row) return 0;
                 const labor = row.labor || 0;
                 const fringes = row.fringes || 0;
                 const payrollExpenses = row.payrollExpenses || 0;
@@ -2641,12 +2671,19 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 const material = row.material || 0;
                 const gcBond = row.generalConditionsBond || 0;
                 const ohpPercent = row.ohpPercent || 0;
+                const childrenTotal = entries
+                    .filter(([, candidate]) => candidate.parentSubcontractor && candidate.parentSubcontractor === row.subcontractor)
+                    .reduce((sum, [childId]) => sum + computeRolledTotal(childId, depth + 1), 0);
 
                 const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
-                const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + gcBond) * (ohpPercent / 100));
-                const subTotal = roundCurrency(labor + fringes + payrollExpenses + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + gcBond);
+                const ownMaterialBase = rentedEquipment + ownedEquipment + trucking + material + gcBond;
+                const materialBase = ownMaterialBase + childrenTotal;
+                const materialOhp = roundCurrency(materialBase * (ohpPercent / 100));
+                const ownMaterialOhp = roundCurrency(ownMaterialBase * (ohpPercent / 100));
+                cascadingMarkupTotal += roundCurrency(materialOhp - ownMaterialOhp);
+                const subTotal = roundCurrency(labor + fringes + payrollExpenses + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + gcBond + childrenTotal);
                 const subTotalCell = Array.from(modal.querySelectorAll('[data-sub-total-id]')).find(
-                    (cell) => cell.getAttribute('data-sub-total-id') === subcontractor
+                    (cell) => cell.getAttribute('data-sub-total-id') === rowId
                 );
                 if (subTotalCell) subTotalCell.textContent = formatCurrency(subTotal);
 
@@ -2660,7 +2697,10 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 totals.material += material;
                 totals.materialOhp += materialOhp;
                 totals.generalConditionsBond += gcBond;
-            });
+                return subTotal;
+            };
+            entries.forEach(([rowId]) => computeRolledTotal(rowId));
+            totals.materialOhp = roundCurrency(totals.materialOhp + cascadingMarkupTotal);
 
             const laborTotal = roundCurrency(totals.labor + totals.fringes + totals.payrollExpenses + totals.laborOhp);
             const materialTotal = roundCurrency(
@@ -2690,9 +2730,20 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             if (totalPreview) totalPreview.textContent = formatCurrency(coTotal);
         };
 
-        modal.querySelectorAll('input[data-sub-id][data-field]').forEach((input) => {
+        modal.querySelectorAll('input[data-sub-id][data-field], input[data-row-id], select[data-row-id]').forEach((input) => {
             input.addEventListener('input', calculateSummary);
+            input.addEventListener('change', calculateSummary);
         });
+        modal.querySelector('#ofcc-add-subtier').onclick = () => {
+            const tbody = modal.querySelector('tbody');
+            const nextIndex = tbody.querySelectorAll('tr[data-ofcc-row]').length + 1;
+            tbody.insertAdjacentHTML('beforeend', buildRow({ subcontractor: '', files: [] }, nextIndex, true));
+            modal.querySelectorAll('input[data-sub-id][data-field], input[data-row-id], select[data-row-id]').forEach((input) => {
+                input.oninput = calculateSummary;
+                input.onchange = calculateSummary;
+            });
+            calculateSummary();
+        };
         calculateSummary();
 
         modal.querySelector('#ofcc-cancel').onclick = () => {
@@ -2703,22 +2754,27 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
         const saveAndResolve = (outputType) => {
             const bySubcontractor = {};
             let hasInvalidValue = false;
-            modal.querySelectorAll('input[data-sub-id][data-field]').forEach((input) => {
-                const subcontractorId = input.getAttribute('data-sub-id');
-                const subcontractor = subcontractorLookup[subcontractorId] || '';
-                const field = input.getAttribute('data-field');
-                if (!bySubcontractor[subcontractor]) {
-                    bySubcontractor[subcontractor] = { subcontractor };
-                }
-
-                const value = input.value.trim();
-                const parsed = value === '' ? 0 : parseFloat(value);
-                if (Number.isNaN(parsed)) {
-                    alert(`Invalid number entered for ${subcontractor} (${field}).`);
-                    hasInvalidValue = true;
-                    return;
-                }
-                bySubcontractor[subcontractor][field] = Math.round(parsed * 100) / 100;
+            modal.querySelectorAll('tr[data-ofcc-row]').forEach((rowEl) => {
+                const rowId = rowEl.getAttribute('data-row-id');
+                const subcontractor = (rowEl.querySelector(`[data-row-id="${rowId}"][data-field="subcontractor"]`)?.value || '').trim() || subcontractorLookup[rowId] || '';
+                if (!subcontractor) return;
+                bySubcontractor[rowId] = {
+                    rowId,
+                    subcontractor,
+                    tier: parseInt(rowEl.querySelector(`[data-row-id="${rowId}"][data-field="tier"]`)?.value || '1', 10) || 1,
+                    parentSubcontractor: (rowEl.querySelector(`[data-row-id="${rowId}"][data-field="parentSubcontractor"]`)?.value || '').trim()
+                };
+                rowEl.querySelectorAll('input[data-sub-id][data-field]').forEach((input) => {
+                    const field = input.getAttribute('data-field');
+                    const value = input.value.trim();
+                    const parsed = value === '' ? 0 : parseFloat(value);
+                    if (Number.isNaN(parsed)) {
+                        alert(`Invalid number entered for ${subcontractor} (${field}).`);
+                        hasInvalidValue = true;
+                        return;
+                    }
+                    bySubcontractor[rowId][field] = Math.round(parsed * 100) / 100;
+                });
             });
 
             if (hasInvalidValue) {
