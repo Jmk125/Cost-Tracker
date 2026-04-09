@@ -55,8 +55,18 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
-// Serve static files from public directory
-app.use(express.static('public'));
+// Serve static files from public directory (disable aggressive caching for UI updates)
+app.use(express.static('public', {
+    etag: false,
+    lastModified: false,
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+    }
+}));
 
 // Function to sanitize file/folder names
 function sanitizeFileName(name) {
