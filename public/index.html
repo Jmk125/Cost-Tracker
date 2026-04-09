@@ -7296,6 +7296,31 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 }
             };
 
+            const handleTemplateDownload = async () => {
+                if (!settings.templatePath) return;
+                try {
+                    const response = await fetch(`/api/upload-template/${encodeURIComponent(project.id)}/download`);
+                    if (!response.ok) {
+                        const errorResult = await response.json().catch(() => ({}));
+                        throw new Error(errorResult.error || 'Download failed');
+                    }
+
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    const extension = settings.templatePath.split('.').pop() || 'xlsx';
+                    link.download = `project_${project.id}_template.${extension}`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    console.error('Template download error:', error);
+                    alert('Failed to download template: ' + error.message);
+                }
+            };
+
             const addSubcontractor = () => {
                 if (settings.newSubcontractor.trim()) {
                     setSettings({
@@ -7422,6 +7447,11 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                     "Required OFCC tags: {Project Name}, {CO Number}, {Description}, {Sub Labor}, {Fringes Total}, {Payroll Expense Total}, {L OH&P Total}, {Labor Total}, {Rented Equip. Total}, {Owned Equip. Total}, {Trucking Total}, {Sub Material}, {Sub Bond Total}, {M OH&P Total}, {Material Total}, {Fee %}, {CMR Bond}, {Fee Amnt}, {Overal Material}, {CO Total}."
                 ),
                 settings.templatePath && React.createElement('p', {className: "text-xs text-green-600"}, "✓ Template uploaded"),
+                settings.templatePath && React.createElement('button', {
+                    type: "button",
+                    onClick: handleTemplateDownload,
+                    className: "text-xs text-blue-600 hover:text-blue-700 underline"
+                }, "Download uploaded template"),
                 settings.templatePath && React.createElement('button', {
                     type: "button",
                     onClick: handleTemplateDelete,

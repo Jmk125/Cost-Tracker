@@ -518,14 +518,6 @@ function optimizeOfccPdfPageLayout(workbook) {
                 fitToHeight: 1,
                 scale: undefined
             };
-        } else if (name.includes('cmr')) {
-            worksheet.pageSetup = {
-                ...existing,
-                fitToPage: true,
-                fitToWidth: 1,
-                fitToHeight: 0,
-                scale: undefined
-            };
         }
     });
 }
@@ -721,6 +713,37 @@ app.delete('/api/upload-template/:projectId', async (req, res) => {
     } catch (error) {
         console.error('Template delete error:', error);
         return res.status(500).json({ error: 'Failed to delete template' });
+    }
+});
+
+app.get('/api/upload-template/:projectId/download', async (req, res) => {
+    try {
+        const { projectId } = req.params;
+        const templateDir = path.join(__dirname, 'data', 'templates');
+        const possibleExtensions = ['.xlsx', '.xls', '.pdf'];
+        let templatePath = null;
+
+        for (const ext of possibleExtensions) {
+            const candidate = path.join(templateDir, `project_${projectId}_template${ext}`);
+            try {
+                await fs.access(candidate);
+                templatePath = candidate;
+                break;
+            } catch (err) {
+                // keep searching
+            }
+        }
+
+        if (!templatePath) {
+            return res.status(404).json({ error: 'Template not found' });
+        }
+
+        const fileName = path.basename(templatePath);
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        return res.sendFile(templatePath);
+    } catch (error) {
+        console.error('Template download error:', error);
+        return res.status(500).json({ error: 'Failed to download template' });
     }
 });
 
