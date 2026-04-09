@@ -506,6 +506,30 @@ function keepOnlyOfccSheets(workbook) {
         .forEach((sheet) => workbook.removeWorksheet(sheet.id));
 }
 
+function optimizeOfccPdfPageLayout(workbook) {
+    getOfccOutputWorksheets(workbook).forEach((worksheet) => {
+        const name = (worksheet.name || '').toLowerCase();
+        const existing = worksheet.pageSetup || {};
+        if (name.includes('prime detail')) {
+            worksheet.pageSetup = {
+                ...existing,
+                fitToPage: true,
+                fitToWidth: 1,
+                fitToHeight: 1,
+                scale: undefined
+            };
+        } else if (name.includes('cmr')) {
+            worksheet.pageSetup = {
+                ...existing,
+                fitToPage: true,
+                fitToWidth: 1,
+                fitToHeight: 0,
+                scale: undefined
+            };
+        }
+    });
+}
+
 async function prewarmLibreOffice() {
     try {
         console.log('🔥 Pre-warming LibreOffice...');
@@ -836,6 +860,7 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
                 scrubWorksheetZerosAndColors(worksheet);
             });
             keepOnlyOfccSheets(workbook);
+            optimizeOfccPdfPageLayout(workbook);
         } else {
             console.log('Populating Excel template for PDF conversion...');
             await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
