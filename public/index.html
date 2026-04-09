@@ -2475,6 +2475,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                     <td class="px-3 py-2 border text-sm text-gray-900">${safeSubcontractor || 'Unknown'}</td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="labor" type="number" step="0.01" min="0" value="${existing.labor ?? ''}" class="w-28 border rounded px-2 py-1"></td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="fringes" type="number" step="0.01" min="0" value="${existing.fringes ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="payrollExpenses" type="number" step="0.01" min="0" value="${existing.payrollExpenses ?? ''}" class="w-28 border rounded px-2 py-1"></td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="rentedEquipment" type="number" step="0.01" min="0" value="${existing.rentedEquipment ?? ''}" class="w-28 border rounded px-2 py-1"></td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="ownedEquipment" type="number" step="0.01" min="0" value="${existing.ownedEquipment ?? ''}" class="w-28 border rounded px-2 py-1"></td>
                     <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="trucking" type="number" step="0.01" min="0" value="${existing.trucking ?? ''}" class="w-28 border rounded px-2 py-1"></td>
@@ -2500,6 +2501,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                                 <th class="px-3 py-2 border text-left text-xs">Subcontractor</th>
                                 <th class="px-3 py-2 border text-left text-xs">Labor</th>
                                 <th class="px-3 py-2 border text-left text-xs">Fringes</th>
+                                <th class="px-3 py-2 border text-left text-xs">Payroll Expenses</th>
                                 <th class="px-3 py-2 border text-left text-xs">Rented Equip.</th>
                                 <th class="px-3 py-2 border text-left text-xs">Owned Equip.</th>
                                 <th class="px-3 py-2 border text-left text-xs">Trucking</th>
@@ -2547,6 +2549,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             const totals = {
                 labor: 0,
                 fringes: 0,
+                payrollExpenses: 0,
                 laborOhp: 0,
                 rentedEquipment: 0,
                 ownedEquipment: 0,
@@ -2559,6 +2562,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             entries.forEach(([subcontractor, row]) => {
                 const labor = row.labor || 0;
                 const fringes = row.fringes || 0;
+                const payrollExpenses = row.payrollExpenses || 0;
                 const rentedEquipment = row.rentedEquipment || 0;
                 const ownedEquipment = row.ownedEquipment || 0;
                 const trucking = row.trucking || 0;
@@ -2566,9 +2570,9 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 const gcBond = row.generalConditionsBond || 0;
                 const ohpPercent = row.ohpPercent || 0;
 
-                const laborOhp = roundCurrency((labor + fringes) * (ohpPercent / 100));
+                const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
                 const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + gcBond) * (ohpPercent / 100));
-                const subTotal = roundCurrency(labor + fringes + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + gcBond);
+                const subTotal = roundCurrency(labor + fringes + payrollExpenses + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + gcBond);
                 const subTotalCell = Array.from(modal.querySelectorAll('[data-sub-total-id]')).find(
                     (cell) => cell.getAttribute('data-sub-total-id') === subcontractor
                 );
@@ -2576,6 +2580,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
 
                 totals.labor += labor;
                 totals.fringes += fringes;
+                totals.payrollExpenses += payrollExpenses;
                 totals.laborOhp += laborOhp;
                 totals.rentedEquipment += rentedEquipment;
                 totals.ownedEquipment += ownedEquipment;
@@ -2585,7 +2590,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 totals.generalConditionsBond += gcBond;
             });
 
-            const laborTotal = roundCurrency(totals.labor + totals.fringes + totals.laborOhp);
+            const laborTotal = roundCurrency(totals.labor + totals.fringes + totals.payrollExpenses + totals.laborOhp);
             const materialTotal = roundCurrency(
                 totals.rentedEquipment + totals.ownedEquipment + totals.trucking + totals.material + totals.materialOhp + totals.generalConditionsBond
             );
@@ -7316,7 +7321,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 ),
                 React.createElement('p', {className: "text-xs text-gray-500"}, "Excel template (.xlsx or .xls) with tagged fields"),
                 settings.isOfcc && React.createElement('p', {className: "text-xs text-amber-700 max-w-xl"},
-                    "Required OFCC tags: {Project Name}, {CO Number}, {Description}, {Sub Labor}, {Fringes Total}, {L OH&P Total}, {Labor Total}, {Rented Equip. Total}, {Owned Equip. Total}, {Trucking Total}, {Sub Material}, {Sub Bond Total}, {M OH&P Total}, {Material Total}, {Fee %}, {CMR Bond}, {Fee Amnt}, {Overal Material}, {CO Total}."
+                    "Required OFCC tags: {Project Name}, {CO Number}, {Description}, {Sub Labor}, {Fringes Total}, {Payroll Expense Total}, {L OH&P Total}, {Labor Total}, {Rented Equip. Total}, {Owned Equip. Total}, {Trucking Total}, {Sub Material}, {Sub Bond Total}, {M OH&P Total}, {Material Total}, {Fee %}, {CMR Bond}, {Fee Amnt}, {Overal Material}, {CO Total}."
                 ),
                 settings.templatePath && React.createElement('p', {className: "text-xs text-green-600"}, "✓ Template uploaded"),
                 settings.templatePath && React.createElement('button', {

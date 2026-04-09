@@ -341,6 +341,7 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
     const aggregate = rows.reduce((totals, row) => {
         const labor = roundCurrency(Number(row.labor) || 0);
         const fringes = roundCurrency(Number(row.fringes) || 0);
+        const payrollExpenses = roundCurrency(Number(row.payrollExpenses) || 0);
         const rentedEquipment = roundCurrency(Number(row.rentedEquipment) || 0);
         const ownedEquipment = roundCurrency(Number(row.ownedEquipment) || 0);
         const trucking = roundCurrency(Number(row.trucking) || 0);
@@ -348,11 +349,12 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         const generalConditionsBond = roundCurrency(Number(row.generalConditionsBond) || 0);
         const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
 
-        const laborOhp = roundCurrency((labor + fringes) * (ohpPercent / 100));
+        const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
         const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + generalConditionsBond) * (ohpPercent / 100));
 
         totals.labor += labor;
         totals.fringes += fringes;
+        totals.payrollExpenses += payrollExpenses;
         totals.laborOhp += laborOhp;
         totals.rentedEquipment += rentedEquipment;
         totals.ownedEquipment += ownedEquipment;
@@ -364,6 +366,7 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
     }, {
         labor: 0,
         fringes: 0,
+        payrollExpenses: 0,
         laborOhp: 0,
         rentedEquipment: 0,
         ownedEquipment: 0,
@@ -373,7 +376,7 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         generalConditionsBond: 0
     });
 
-    const laborTotal = roundCurrency(aggregate.labor + aggregate.fringes + aggregate.laborOhp);
+    const laborTotal = roundCurrency(aggregate.labor + aggregate.fringes + aggregate.payrollExpenses + aggregate.laborOhp);
     const materialTotal = roundCurrency(
         aggregate.rentedEquipment +
         aggregate.ownedEquipment +
@@ -408,6 +411,7 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         '{Description}': changeOrderData.description || '',
         '{Sub Labor}': formatCurrencyForTemplate(aggregate.labor),
         '{Fringes Total}': formatCurrencyForTemplate(aggregate.fringes),
+        '{Payroll Expense Total}': formatCurrencyForTemplate(aggregate.payrollExpenses),
         '{L OH&P Total}': formatCurrencyForTemplate(aggregate.laborOhp),
         '{OH&P Total}': formatCurrencyForTemplate(aggregate.laborOhp),
         '{Labor Total}': formatCurrencyForTemplate(laborTotal),
@@ -467,7 +471,7 @@ function getOfccOutputWorksheets(workbook) {
 function scrubWorksheetZerosAndColors(worksheet) {
     const zeroLikePattern = /^\$?\s*0([.,]0+)?\s*%?$/;
     worksheet.eachRow((row) => {
-        row.eachCell({ includeEmpty: true }, (cell) => {
+        row.eachCell((cell) => {
             if (typeof cell.value === 'number' && cell.value === 0) {
                 cell.value = null;
             } else if (typeof cell.value === 'string' && zeroLikePattern.test(cell.value.trim())) {
@@ -605,6 +609,7 @@ app.post('/api/upload-template', upload.single('template'), async (req, res) => 
                 '{Description}',
                 '{Sub Labor}',
                 '{Fringes Total}',
+                '{Payroll Expense Total}',
                 '{L OH&P Total}',
                 '{Labor Total}',
                 '{Rented Equip. Total}',
