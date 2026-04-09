@@ -315,7 +315,7 @@ function formatPercentForTemplate(percent) {
 function buildChangeOrderFileName(changeOrderData, extension) {
     const coNumber = sanitizeFileName((changeOrderData?.number || changeOrderData?.itemNumber || 'CO').toString());
     const description = sanitizeFileName((changeOrderData?.description || 'Description').toString());
-    return `${coNumber} - ${description}.${extension}`;
+    return `CO-${coNumber}-${description}.${extension}`;
 }
 
 function findWorksheetTags(worksheet) {

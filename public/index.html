@@ -2445,7 +2445,7 @@ const buildChangeOrderFileName = (changeOrder, extension) => {
     };
     const numberPart = sanitize(changeOrder?.number || changeOrder?.itemNumber, 'CO');
     const descriptionPart = sanitize(changeOrder?.description, 'Description');
-    return `${numberPart} - ${descriptionPart}.${extension}`;
+    return `CO-${numberPart}-${descriptionPart}.${extension}`;
 };
 
 const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
@@ -2652,53 +2652,126 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
     });
 };
 
-const handleGeneratePDF = async (changeOrder) => {
-    try {
-        const choice = project.isOfcc ? 'excel' : await new Promise((resolve) => {
-            const modal = document.createElement('div');
-            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-            modal.innerHTML = `
-                <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-                    <h3 class="text-lg font-medium text-gray-900 mb-4">Generate Change Order</h3>
-                    <p class="text-sm text-gray-600 mb-6">Choose how you want to generate the change order:</p>
-                    <div class="space-y-3">
-                        <button id="excel-choice" class="w-full px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 text-left">
-                            <div class="font-medium">Excel Form</div>
-                            <div class="text-sm opacity-90">Generate fillable Excel form with calculations</div>
-                        </button>
-                        <button id="pdf-choice" class="w-full px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-left">
-                            <div class="font-medium">PDF with Attachments</div>
-                            <div class="text-sm opacity-90">Generate PDF form and merge with attachment files</div>
-                        </button>
-                    </div>
-                    <button id="cancel-choice" class="w-full mt-4 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
-                        Cancel
-                    </button>
-                </div>
-            `;
-            
-            document.body.appendChild(modal);
-            
-            modal.querySelector('#excel-choice').onclick = () => {
-                document.body.removeChild(modal);
-                resolve('excel');
-            };
-            
-            modal.querySelector('#pdf-choice').onclick = () => {
-                document.body.removeChild(modal);
-                resolve('pdf');
-            };
-            
-            modal.querySelector('#cancel-choice').onclick = () => {
-                document.body.removeChild(modal);
-                resolve('cancel');
-            };
-        });
-        
-        if (choice === 'cancel') {
-            return;
-        }
+const collectPdfBackupSelections = async (linkedCosts) => {
+    return new Promise((resolve) => {
+        const getDefaultSelection = (cost) => {
+            if (Array.isArray(cost.files) && cost.files.length > 0) {
+                return cost.files[0].relativePath;
+            }
+            return '';
+        };
 
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-white rounded-lg p-4 w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+                <h3 class="text-lg font-medium text-gray-900 mb-2">PDF Backup Attachments</h3>
+                <p class="text-sm text-gray-600 mb-4">Choose backup files to append after the CMR and Prime Detail sheets. You can keep existing, remove, upload new, or ignore.</p>
+                <div class="overflow-auto border rounded">
+                    <table class="min-w-full border-collapse text-sm">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-3 py-2 border text-left">Subcontractor</th>
+                                <th class="px-3 py-2 border text-left">Current Backup</th>
+                                <th class="px-3 py-2 border text-left">Use Existing</th>
+                                <th class="px-3 py-2 border text-left">Upload New</th>
+                                <th class="px-3 py-2 border text-left">Remove / Ignore</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${linkedCosts.map((cost, index) => `
+                                <tr>
+                                    <td class="px-3 py-2 border">${(cost.subcontractor || '').replace(/</g, '&lt;')}</td>
+                                    <td class="px-3 py-2 border">${cost.files && cost.files.length ? cost.files.map(f => (f.originalName || f.filename)).join(', ') : '<span class="text-gray-400">No backup</span>'}</td>
+                                    <td class="px-3 py-2 border">
+                                        <select data-index="${index}" data-field="existing" class="border rounded px-2 py-1 w-full">
+                                            <option value="">None</option>
+                                            ${(cost.files || []).map(file => `<option value="${file.relativePath}" ${getDefaultSelection(cost) === file.relativePath ? 'selected' : ''}>${(file.originalName || file.filename).replace(/</g, '&lt;')}</option>`).join('')}
+                                        </select>
+                                    </td>
+                                    <td class="px-3 py-2 border">
+                                        <input data-index="${index}" data-field="upload" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.txt" class="text-xs" />
+                                    </td>
+                                    <td class="px-3 py-2 border">
+                                        <label class="inline-flex items-center gap-2">
+                                            <input data-index="${index}" data-field="ignore" type="checkbox" />
+                                            <span>Ignore</span>
+                                        </label>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="flex justify-end gap-3 mt-4">
+                    <button id="pdf-backup-cancel" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                    <button id="pdf-backup-save" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Continue</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        modal.querySelector('#pdf-backup-cancel').onclick = () => {
+            document.body.removeChild(modal);
+            resolve(null);
+        };
+
+        modal.querySelector('#pdf-backup-save').onclick = async () => {
+            try {
+                const updatedCosts = [];
+                const uploadedUpdates = [];
+                for (let index = 0; index < linkedCosts.length; index++) {
+                    const cost = linkedCosts[index];
+                    const ignoreEl = modal.querySelector(`input[data-index="${index}"][data-field="ignore"]`);
+                    const existingEl = modal.querySelector(`select[data-index="${index}"][data-field="existing"]`);
+                    const uploadEl = modal.querySelector(`input[data-index="${index}"][data-field="upload"]`);
+                    const ignore = !!ignoreEl?.checked;
+                    let selectedFile = ignore ? null : (existingEl?.value || null);
+                    let nextFiles = cost.files || [];
+
+                    if (!ignore && uploadEl?.files && uploadEl.files.length > 0) {
+                        const file = uploadEl.files[0];
+                        const formDataToUpload = new FormData();
+                        formDataToUpload.append('files', file);
+                        formDataToUpload.append('projectId', project.id.toString());
+                        formDataToUpload.append('projectName', project.name);
+                        formDataToUpload.append('subcontractor', cost.subcontractor || 'Unknown');
+                        formDataToUpload.append('costId', cost.id.toString());
+                        formDataToUpload.append('description', cost.description || 'Backup upload');
+
+                        const uploadResponse = await fetch('/api/upload-cost-files', {
+                            method: 'POST',
+                            body: formDataToUpload
+                        });
+                        if (!uploadResponse.ok) {
+                            throw new Error(`Failed to upload backup for ${cost.subcontractor}`);
+                        }
+                        const uploadResult = await uploadResponse.json();
+                        const uploadedFile = uploadResult.files && uploadResult.files[0];
+                        if (uploadedFile) {
+                            nextFiles = [...nextFiles, uploadedFile];
+                            selectedFile = uploadedFile.relativePath;
+                            uploadedUpdates.push({ costId: cost.id, files: nextFiles });
+                        }
+                    }
+
+                    updatedCosts.push({
+                        ...cost,
+                        files: nextFiles,
+                        selectedFile
+                    });
+                }
+                document.body.removeChild(modal);
+                resolve({ updatedCosts, uploadedUpdates });
+            } catch (error) {
+                alert(error.message || 'Failed to process backup attachments.');
+            }
+        };
+    });
+};
+
+const handleGeneratePDF = async (changeOrder, choice) => {
+    try {
         // Check if template exists
         if (!project.templatePath) {
             alert('Please upload a change order template in Project Settings first.');
@@ -2728,36 +2801,23 @@ const handleGeneratePDF = async (changeOrder) => {
             });
         }
         
-        // Handle file selection for costs with multiple files (only needed for PDF with attachments)
         let costsWithSelectedFiles = linkedCosts;
         if (choice === 'pdf') {
-            costsWithSelectedFiles = await Promise.all(
-                linkedCosts.map(async (cost) => {
-                    if (!cost.files || cost.files.length === 0) {
-                        return { ...cost, selectedFile: null };
-                    } else if (cost.files.length === 1) {
-                        return { ...cost, selectedFile: cost.files[0].relativePath };
-                    } else {
-                        // Multiple files - prompt user to select
-                        return new Promise((resolve) => {
-                            const fileOptions = cost.files.map((file, index) => 
-                                `${index + 1}. ${file.originalName || file.filename}`
-                            ).join('\n');
-                            
-                            const selection = prompt(
-                                `Multiple files found for ${cost.subcontractor}:\n${fileOptions}\n\nEnter number (or 0 to skip):`
-                            );
-                            
-                            const selectedIndex = parseInt(selection) - 1;
-                            const selectedFile = (selectedIndex >= 0 && selectedIndex < cost.files.length) 
-                                ? cost.files[selectedIndex].relativePath 
-                                : null;
-                            
-                            resolve({ ...cost, selectedFile });
-                        });
-                    }
-                })
-            );
+            const backupSelection = await collectPdfBackupSelections(linkedCosts);
+            if (!backupSelection) {
+                return;
+            }
+            costsWithSelectedFiles = backupSelection.updatedCosts;
+
+            if (backupSelection.uploadedUpdates.length > 0) {
+                updateProject({
+                    ...project,
+                    subcontractorCosts: project.subcontractorCosts.map((cost) => {
+                        const uploaded = backupSelection.uploadedUpdates.find(entry => entry.costId === cost.id);
+                        return uploaded ? { ...cost, files: uploaded.files } : cost;
+                    })
+                });
+            }
         }
         
         // Choose the appropriate endpoint based on user choice
@@ -3156,16 +3216,15 @@ React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-
         className: "text-red-600 hover:text-red-900"
     }, React.createElement(Trash2)),
     React.createElement('button', {
-        onClick: () => handleGeneratePDF(co),
+        onClick: () => handleGeneratePDF(co, 'excel'),
         className: "text-green-600 hover:text-green-900",
-        title: "Generate Change Order"
-    }, React.createElement('svg', {className: "lucide-icon", viewBox: "0 0 24 24"}, 
-        React.createElement('path', {d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"}),
-        React.createElement('polyline', {points: "14,2 14,8 20,8"}),
-        React.createElement('line', {x1: "16", y1: "13", x2: "8", y2: "13"}),
-        React.createElement('line', {x1: "16", y1: "17", x2: "8", y2: "17"}),
-        React.createElement('line', {x1: "10", y1: "9", x2: "8", y2: "9"})
-    ))
+        title: "Generate Excel"
+    }, "XLS"),
+    React.createElement('button', {
+        onClick: () => handleGeneratePDF(co, 'pdf'),
+        className: "text-purple-600 hover:text-purple-900",
+        title: "Generate PDF"
+    }, "PDF")
 )
                                     ),
                                     isExpanded && linkedCosts.length > 0 && React.createElement('tr', {key: `${co.id}-details`},
@@ -6984,6 +7043,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
 
         const ProjectSettings = ({ project, updateProject, onClose, noteAuthorName, setNoteAuthorName }) => {
             const [settings, setSettings] = useState({
+                projectName: project.name || '',
                 bondPercentage: project.bondPercentage,
                 feePercentage: project.feePercentage,
                 isOfcc: !!project.isOfcc,
@@ -7039,6 +7099,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 e.preventDefault();
                 updateProject({
                     ...project,
+                    name: settings.projectName,
                     bondPercentage: parseFloat(settings.bondPercentage),
                     feePercentage: parseFloat(settings.feePercentage),
                     isOfcc: settings.isOfcc,
@@ -7089,6 +7150,16 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             };
 
             return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-6"},
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Project Name"),
+                    React.createElement('input', {
+                        type: "text",
+                        value: settings.projectName,
+                        onChange: (e) => setSettings({...settings, projectName: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                        required: true
+                    })
+                ),
                 React.createElement('div', {className: "grid grid-cols-2 gap-4"},
                     React.createElement('div', null,
                         React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Bond Percentage"),
