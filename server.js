@@ -300,6 +300,24 @@ function formatCurrency(amount) {
     return `$${roundCurrency(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function formatCurrencyForTemplate(amount) {
+    const rounded = roundCurrency(amount);
+    return rounded === 0 ? '' : formatCurrency(rounded);
+}
+
+function formatPercentForTemplate(percent) {
+    const rounded = roundCurrency(percent);
+    return rounded === 0
+        ? ''
+        : `${rounded.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+function buildChangeOrderFileName(changeOrderData, extension) {
+    const coNumber = sanitizeFileName((changeOrderData?.number || changeOrderData?.itemNumber || 'CO').toString());
+    const description = sanitizeFileName((changeOrderData?.description || 'Description').toString());
+    return `${coNumber} - ${description}.${extension}`;
+}
+
 function findWorksheetTags(worksheet) {
     const tags = new Set();
     worksheet.eachRow((row) => {
@@ -331,7 +349,7 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
 
         const laborOhp = roundCurrency((labor + fringes) * (ohpPercent / 100));
-        const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material) * (ohpPercent / 100));
+        const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + material + generalConditionsBond) * (ohpPercent / 100));
 
         totals.labor += labor;
         totals.fringes += fringes;
@@ -364,7 +382,6 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         aggregate.materialOhp +
         aggregate.generalConditionsBond
     );
-    const combinedOhp = roundCurrency(aggregate.laborOhp + aggregate.materialOhp);
     const feePercent = roundCurrency(Number(project?.feePercentage) || 0);
     const bondPercent = roundCurrency(Number(project?.bondPercentage) || 0);
 
@@ -389,23 +406,23 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         '{Project Name}': project?.name || '',
         '{CO Number}': changeOrderData.number || changeOrderData.itemNumber || '',
         '{Description}': changeOrderData.description || '',
-        '{Sub Labor}': formatCurrency(aggregate.labor),
-        '{Fringes Total}': formatCurrency(aggregate.fringes),
-        '{L OH&P Total}': formatCurrency(aggregate.laborOhp),
-        '{OH&P Total}': formatCurrency(combinedOhp),
-        '{Labor Total}': formatCurrency(laborTotal),
-        '{Rented Equip. Total}': formatCurrency(aggregate.rentedEquipment),
-        '{Owned Equip. Total}': formatCurrency(aggregate.ownedEquipment),
-        '{Trucking Total}': formatCurrency(aggregate.trucking),
-        '{Sub Material}': formatCurrency(aggregate.material),
-        '{Sub Bond Total}': formatCurrency(aggregate.generalConditionsBond),
-        '{M OH&P Total}': formatCurrency(aggregate.materialOhp),
-        '{Material Total}': formatCurrency(materialTotal),
-        '{Fee %}': `${feePercent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
-        '{CMR Bond}': formatCurrency(cmrBond),
-        '{Fee Amnt}': formatCurrency(feeAmount),
-        '{Overal Material}': formatCurrency(overallMaterial),
-        '{CO Total}': formatCurrency(coTotal)
+        '{Sub Labor}': formatCurrencyForTemplate(aggregate.labor),
+        '{Fringes Total}': formatCurrencyForTemplate(aggregate.fringes),
+        '{L OH&P Total}': formatCurrencyForTemplate(aggregate.laborOhp),
+        '{OH&P Total}': formatCurrencyForTemplate(aggregate.laborOhp),
+        '{Labor Total}': formatCurrencyForTemplate(laborTotal),
+        '{Rented Equip. Total}': formatCurrencyForTemplate(aggregate.rentedEquipment),
+        '{Owned Equip. Total}': formatCurrencyForTemplate(aggregate.ownedEquipment),
+        '{Trucking Total}': formatCurrencyForTemplate(aggregate.trucking),
+        '{Sub Material}': formatCurrencyForTemplate(aggregate.material),
+        '{Sub Bond Total}': formatCurrencyForTemplate(aggregate.generalConditionsBond),
+        '{M OH&P Total}': formatCurrencyForTemplate(aggregate.materialOhp),
+        '{Material Total}': formatCurrencyForTemplate(materialTotal),
+        '{Fee %}': formatPercentForTemplate(feePercent),
+        '{CMR Bond}': formatCurrencyForTemplate(cmrBond),
+        '{Fee Amnt}': formatCurrencyForTemplate(feeAmount),
+        '{Overal Material}': formatCurrencyForTemplate(overallMaterial),
+        '{CO Total}': formatCurrencyForTemplate(coTotal)
     };
 }
 
@@ -552,7 +569,7 @@ app.post('/api/upload-template', upload.single('template'), async (req, res) => 
                 '{Description}',
                 '{Sub Labor}',
                 '{Fringes Total}',
-                '{OH&P Total}',
+                '{L OH&P Total}',
                 '{Labor Total}',
                 '{Rented Equip. Total}',
                 '{Owned Equip. Total}',
@@ -701,8 +718,9 @@ app.post('/api/generate-change-order-excel', async (req, res) => {
         await fs.unlink(tempExcelPath);
         
         // Send as downloadable Excel file
+        const excelFileName = buildChangeOrderFileName(changeOrderData, 'xlsx');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="CO_${changeOrderData.number || changeOrderData.itemNumber}_${Date.now()}.xlsx"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${excelFileName}"`);
         res.send(excelBuffer);
         
     } catch (error) {
@@ -888,8 +906,9 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             console.log('PDF generation completed successfully');
             
             // Send as downloadable PDF
+            const pdfFileName = buildChangeOrderFileName(changeOrderData, 'pdf');
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="CO_${changeOrderData.number || changeOrderData.itemNumber}_${timestamp}.pdf"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${pdfFileName}"`);
             res.send(Buffer.from(pdfBytes));
             
         } catch (conversionError) {

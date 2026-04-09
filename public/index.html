@@ -2438,6 +2438,16 @@ const closeStatusHistoryModal = () => {
     setStatusHistoryModal({ isOpen: false, changeOrder: null });
 };
 
+const buildChangeOrderFileName = (changeOrder, extension) => {
+    const sanitize = (value, fallback) => {
+        const safe = (value || fallback || '').toString().trim().replace(/[\\/:*?"<>|]/g, '_');
+        return safe || fallback;
+    };
+    const numberPart = sanitize(changeOrder?.number || changeOrder?.itemNumber, 'CO');
+    const descriptionPart = sanitize(changeOrder?.description, 'Description');
+    return `${numberPart} - ${descriptionPart}.${extension}`;
+};
+
 const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
     return new Promise((resolve) => {
         const existingRows = Array.isArray(changeOrder.ofccBreakdown?.subcontractors)
@@ -2554,7 +2564,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 const ohpPercent = row.ohpPercent || 0;
 
                 const laborOhp = roundCurrency((labor + fringes) * (ohpPercent / 100));
-                const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material) * (ohpPercent / 100));
+                const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + material + gcBond) * (ohpPercent / 100));
                 const subTotal = roundCurrency(labor + fringes + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + gcBond);
                 const subTotalCell = Array.from(modal.querySelectorAll('[data-sub-total-id]')).find(
                     (cell) => cell.getAttribute('data-sub-total-id') === subcontractor
@@ -2777,7 +2787,7 @@ const handleGeneratePDF = async (changeOrder) => {
             
             // Set appropriate filename based on choice
             const extension = choice === 'excel' ? 'xlsx' : 'pdf';
-            link.download = `CO_${requestChangeOrderData.number || requestChangeOrderData.itemNumber}_${Date.now()}.${extension}`;
+            link.download = buildChangeOrderFileName(requestChangeOrderData, extension);
             
             document.body.appendChild(link);
             link.click();
@@ -7174,7 +7184,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 ),
                 React.createElement('p', {className: "text-xs text-gray-500"}, "Excel template (.xlsx or .xls) with tagged fields"),
                 settings.isOfcc && React.createElement('p', {className: "text-xs text-amber-700 max-w-xl"},
-                    "Required OFCC tags: {Project Name}, {CO Number}, {Description}, {Sub Labor}, {Fringes Total}, {OH&P Total}, {Labor Total}, {Rented Equip. Total}, {Owned Equip. Total}, {Trucking Total}, {Sub Material}, {Sub Bond Total}, {M OH&P Total}, {Material Total}, {Fee %}, {CMR Bond}, {Fee Amnt}, {Overal Material}, {CO Total}."
+                    "Required OFCC tags: {Project Name}, {CO Number}, {Description}, {Sub Labor}, {Fringes Total}, {L OH&P Total}, {Labor Total}, {Rented Equip. Total}, {Owned Equip. Total}, {Trucking Total}, {Sub Material}, {Sub Bond Total}, {M OH&P Total}, {Material Total}, {Fee %}, {CMR Bond}, {Fee Amnt}, {Overal Material}, {CO Total}."
                 ),
                 settings.templatePath && React.createElement('p', {className: "text-xs text-green-600"}, "✓ Template uploaded"),
                 settings.templatePath && React.createElement('button', {
