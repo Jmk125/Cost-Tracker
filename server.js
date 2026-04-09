@@ -859,7 +859,8 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             
             // Enhanced LibreOffice command for Raspberry Pi
             const tempDir = path.dirname(tempPdfPath);
-            const command = `timeout 120 libreoffice --headless --invisible --nodefault --nolockcheck --nologo --norestore --convert-to pdf --outdir "${tempDir}" "${tempExcelPath}"`;
+            const pdfFilterOptions = 'pdf:calc_pdf_Export:{"SinglePageSheets":{"type":"boolean","value":"false"}}';
+            const command = `timeout 120 libreoffice --headless --invisible --nodefault --nolockcheck --nologo --norestore --convert-to '${pdfFilterOptions}' --outdir "${tempDir}" "${tempExcelPath}"`;
             console.log('LibreOffice command:', command);
             
             // Set environment variables for better headless operation
