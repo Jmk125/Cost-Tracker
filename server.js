@@ -395,9 +395,10 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         generalConditionsBond: 0
     });
 
-    let cascadingMarkupTotal = 0;
+    const computedRowTotals = new Map();
     const computeRolledTotal = (rowId, depth = 0) => {
         if (depth > 10) return 0;
+        if (computedRowTotals.has(rowId)) return computedRowTotals.get(rowId);
         const row = rowMap.get(rowId);
         if (!row) return 0;
 
@@ -411,24 +412,33 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         const generalConditionsBond = roundCurrency(Number(row.generalConditionsBond) || 0);
         const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
 
-        const childrenTotal = normalizedRows
-            .filter(candidate => candidate.parentSubcontractor && candidate.parentSubcontractor === row.subcontractor)
-            .reduce((sum, candidate) => sum + computeRolledTotal(candidate.rowId, depth + 1), 0);
+        const children = normalizedRows.filter(candidate =>
+            candidate.parentSubcontractor &&
+            candidate.parentSubcontractor === row.subcontractor &&
+            candidate.tier === (row.tier + 1)
+        );
+        const childrenTotals = children.map(candidate => computeRolledTotal(candidate.rowId, depth + 1));
+        const childrenLaborRolled = childrenTotals.reduce((sum, value) => sum + value.laborRolled, 0);
+        const childrenMaterialRolled = childrenTotals.reduce((sum, value) => sum + value.materialRolled, 0);
 
-        const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
+        const ownLaborBase = labor + fringes + payrollExpenses;
+        const laborBase = ownLaborBase + childrenLaborRolled;
+        const laborOhp = roundCurrency(laborBase * (ohpPercent / 100));
+        const laborRolled = roundCurrency(laborBase + laborOhp);
+
         const ownMaterialBase = rentedEquipment + ownedEquipment + trucking + material + generalConditionsBond;
-        const materialBase = ownMaterialBase + childrenTotal;
+        const materialBase = ownMaterialBase + childrenMaterialRolled;
         const materialOhp = roundCurrency(materialBase * (ohpPercent / 100));
-        const ownMaterialOhp = roundCurrency(ownMaterialBase * (ohpPercent / 100));
-        cascadingMarkupTotal += roundCurrency(materialOhp - ownMaterialOhp);
-        return roundCurrency(labor + fringes + payrollExpenses + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + generalConditionsBond + childrenTotal);
+        const materialRolled = roundCurrency(materialBase + materialOhp);
+
+        const computed = { laborOhp, materialOhp, laborRolled, materialRolled };
+        computedRowTotals.set(rowId, computed);
+        return computed;
     };
 
-    normalizedRows.forEach((row) => {
-        if (row.parentSubcontractor) return;
-        computeRolledTotal(row.rowId);
-    });
-    aggregate.materialOhp = roundCurrency(aggregate.materialOhp + cascadingMarkupTotal);
+    normalizedRows.forEach((row) => computeRolledTotal(row.rowId));
+    aggregate.laborOhp = roundCurrency(Array.from(computedRowTotals.values()).reduce((sum, row) => sum + row.laborOhp, 0));
+    aggregate.materialOhp = roundCurrency(Array.from(computedRowTotals.values()).reduce((sum, row) => sum + row.materialOhp, 0));
 
     const laborTotal = roundCurrency(aggregate.labor + aggregate.fringes + aggregate.payrollExpenses + aggregate.laborOhp);
     const materialTotal = roundCurrency(

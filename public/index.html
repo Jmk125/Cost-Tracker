@@ -2542,15 +2542,21 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             const safeSubcontractor = escapeHtml(subcontractorKey);
             const subId = `sub-${index}`;
             subcontractorLookup[subId] = subcontractorKey;
+            const currentTier = existing.tier || (isAdditional ? 2 : 1);
             return `
                 <tr data-ofcc-row="true" data-row-id="${subId}">
-                    <td class="px-3 py-2 border text-sm text-gray-900">${safeSubcontractor || 'Unknown'}</td>
+                    <td class="px-3 py-2 border text-sm text-gray-900">
+                        <div class="flex items-center gap-2">
+                            <span>${safeSubcontractor || 'Subcontractor'}</span>
+                            <button type="button" data-add-child="${subId}" class="w-5 h-5 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 leading-none" title="Add Tiered Sub">+</button>
+                        </div>
+                    </td>
                     <td class="px-2 py-1 border"><input data-row-id="${subId}" data-field="subcontractor" type="text" value="${safeSubcontractor}" class="w-36 border rounded px-2 py-1" ${isAdditional ? '' : 'readonly'}></td>
                     <td class="px-2 py-1 border">
                         <select data-row-id="${subId}" data-field="tier" class="w-20 border rounded px-2 py-1">
-                            <option value="1" ${(existing.tier || 1) === 1 ? 'selected' : ''}>1</option>
-                            <option value="2" ${(existing.tier || 1) === 2 ? 'selected' : ''}>2</option>
-                            <option value="3" ${(existing.tier || 1) === 3 ? 'selected' : ''}>3</option>
+                            <option value="1" ${currentTier === 1 ? 'selected' : ''}>1</option>
+                            <option value="2" ${currentTier === 2 ? 'selected' : ''}>2</option>
+                            <option value="3" ${currentTier === 3 ? 'selected' : ''}>3</option>
                         </select>
                     </td>
                     <td class="px-2 py-1 border"><input data-row-id="${subId}" data-field="parentSubcontractor" type="text" value="${existing.parentSubcontractor ?? ''}" class="w-36 border rounded px-2 py-1" placeholder="Parent sub name"></td>
@@ -2657,11 +2663,12 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             };
 
             const rowsById = Object.fromEntries(entries);
-            let cascadingMarkupTotal = 0;
+            const computedRowTotals = new Map();
             const computeRolledTotal = (rowId, depth = 0) => {
-                if (depth > 10) return 0;
+                if (depth > 10) return { laborRolled: 0, materialRolled: 0, laborOhp: 0, materialOhp: 0 };
+                if (computedRowTotals.has(rowId)) return computedRowTotals.get(rowId);
                 const row = rowsById[rowId];
-                if (!row) return 0;
+                if (!row) return { laborRolled: 0, materialRolled: 0, laborOhp: 0, materialOhp: 0 };
                 const labor = row.labor || 0;
                 const fringes = row.fringes || 0;
                 const payrollExpenses = row.payrollExpenses || 0;
@@ -2671,17 +2678,26 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 const material = row.material || 0;
                 const gcBond = row.generalConditionsBond || 0;
                 const ohpPercent = row.ohpPercent || 0;
-                const childrenTotal = entries
-                    .filter(([, candidate]) => candidate.parentSubcontractor && candidate.parentSubcontractor === row.subcontractor)
-                    .reduce((sum, [childId]) => sum + computeRolledTotal(childId, depth + 1), 0);
+                const children = entries
+                    .filter(([, candidate]) =>
+                        candidate.parentSubcontractor &&
+                        candidate.parentSubcontractor === row.subcontractor &&
+                        candidate.tier === (row.tier + 1)
+                    )
+                    .map(([childId]) => computeRolledTotal(childId, depth + 1));
+                const childrenLaborRolled = children.reduce((sum, child) => sum + child.laborRolled, 0);
+                const childrenMaterialRolled = children.reduce((sum, child) => sum + child.materialRolled, 0);
 
-                const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
+                const ownLaborBase = labor + fringes + payrollExpenses;
+                const laborBase = ownLaborBase + childrenLaborRolled;
+                const laborOhp = roundCurrency(laborBase * (ohpPercent / 100));
+                const laborRolled = roundCurrency(laborBase + laborOhp);
+
                 const ownMaterialBase = rentedEquipment + ownedEquipment + trucking + material + gcBond;
-                const materialBase = ownMaterialBase + childrenTotal;
+                const materialBase = ownMaterialBase + childrenMaterialRolled;
                 const materialOhp = roundCurrency(materialBase * (ohpPercent / 100));
-                const ownMaterialOhp = roundCurrency(ownMaterialBase * (ohpPercent / 100));
-                cascadingMarkupTotal += roundCurrency(materialOhp - ownMaterialOhp);
-                const subTotal = roundCurrency(labor + fringes + payrollExpenses + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + gcBond + childrenTotal);
+                const materialRolled = roundCurrency(materialBase + materialOhp);
+                const subTotal = roundCurrency(laborRolled + materialRolled);
                 const subTotalCell = Array.from(modal.querySelectorAll('[data-sub-total-id]')).find(
                     (cell) => cell.getAttribute('data-sub-total-id') === rowId
                 );
@@ -2695,12 +2711,14 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 totals.ownedEquipment += ownedEquipment;
                 totals.trucking += trucking;
                 totals.material += material;
-                totals.materialOhp += materialOhp;
                 totals.generalConditionsBond += gcBond;
-                return subTotal;
+                const computed = { laborRolled, materialRolled, laborOhp, materialOhp };
+                computedRowTotals.set(rowId, computed);
+                return computed;
             };
             entries.forEach(([rowId]) => computeRolledTotal(rowId));
-            totals.materialOhp = roundCurrency(totals.materialOhp + cascadingMarkupTotal);
+            totals.laborOhp = roundCurrency(Array.from(computedRowTotals.values()).reduce((sum, row) => sum + row.laborOhp, 0));
+            totals.materialOhp = roundCurrency(Array.from(computedRowTotals.values()).reduce((sum, row) => sum + row.materialOhp, 0));
 
             const laborTotal = roundCurrency(totals.labor + totals.fringes + totals.payrollExpenses + totals.laborOhp);
             const materialTotal = roundCurrency(
@@ -2730,18 +2748,32 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             if (totalPreview) totalPreview.textContent = formatCurrency(coTotal);
         };
 
-        modal.querySelectorAll('input[data-sub-id][data-field], input[data-row-id], select[data-row-id]').forEach((input) => {
-            input.addEventListener('input', calculateSummary);
-            input.addEventListener('change', calculateSummary);
-        });
-        modal.querySelector('#ofcc-add-subtier').onclick = () => {
-            const tbody = modal.querySelector('tbody');
-            const nextIndex = tbody.querySelectorAll('tr[data-ofcc-row]').length + 1;
-            tbody.insertAdjacentHTML('beforeend', buildRow({ subcontractor: '', files: [] }, nextIndex, true));
+        const attachRowListeners = () => {
             modal.querySelectorAll('input[data-sub-id][data-field], input[data-row-id], select[data-row-id]').forEach((input) => {
                 input.oninput = calculateSummary;
                 input.onchange = calculateSummary;
             });
+            modal.querySelectorAll('button[data-add-child]').forEach((button) => {
+                button.onclick = () => {
+                    const parentRowId = button.getAttribute('data-add-child');
+                    const parentSub = modal.querySelector(`[data-row-id="${parentRowId}"][data-field="subcontractor"]`)?.value || '';
+                    const parentTier = parseInt(modal.querySelector(`[data-row-id="${parentRowId}"][data-field="tier"]`)?.value || '1', 10) || 1;
+                    const childTier = Math.min(parentTier + 1, 3);
+                    const tbody = modal.querySelector('tbody');
+                    const nextIndex = tbody.querySelectorAll('tr[data-ofcc-row]').length + 1;
+                    tbody.insertAdjacentHTML('beforeend', buildRow({ subcontractor: '', tier: childTier, parentSubcontractor: parentSub, files: [] }, nextIndex, true));
+                    attachRowListeners();
+                    calculateSummary();
+                };
+            });
+        };
+
+        attachRowListeners();
+        modal.querySelector('#ofcc-add-subtier').onclick = () => {
+            const tbody = modal.querySelector('tbody');
+            const nextIndex = tbody.querySelectorAll('tr[data-ofcc-row]').length + 1;
+            tbody.insertAdjacentHTML('beforeend', buildRow({ subcontractor: '', files: [] }, nextIndex, true));
+            attachRowListeners();
             calculateSummary();
         };
         calculateSummary();
