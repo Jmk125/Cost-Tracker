@@ -456,6 +456,42 @@ function applyReplacementsToWorksheet(worksheet, replacements) {
     });
 }
 
+function getOfccOutputWorksheets(workbook) {
+    const targetSheets = workbook.worksheets.filter((worksheet) => {
+        const name = (worksheet.name || '').toLowerCase();
+        return name.includes('cmr') || name.includes('prime detail');
+    });
+    return targetSheets.length ? targetSheets : workbook.worksheets;
+}
+
+function scrubWorksheetZerosAndColors(worksheet) {
+    const zeroLikePattern = /^\$?\s*0([.,]0+)?\s*%?$/;
+    worksheet.eachRow((row) => {
+        row.eachCell({ includeEmpty: true }, (cell) => {
+            if (typeof cell.value === 'number' && cell.value === 0) {
+                cell.value = null;
+            } else if (typeof cell.value === 'string' && zeroLikePattern.test(cell.value.trim())) {
+                cell.value = '';
+            }
+
+            cell.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFFFFFFF' },
+                bgColor: { argb: 'FFFFFFFF' }
+            };
+        });
+    });
+}
+
+function keepOnlyOfccSheets(workbook) {
+    const targetSheets = getOfccOutputWorksheets(workbook);
+    const targetIds = new Set(targetSheets.map((sheet) => sheet.id));
+    workbook.worksheets
+        .filter((sheet) => !targetIds.has(sheet.id))
+        .forEach((sheet) => workbook.removeWorksheet(sheet.id));
+}
+
 async function prewarmLibreOffice() {
     try {
         console.log('🔥 Pre-warming LibreOffice...');
@@ -698,6 +734,10 @@ app.post('/api/generate-change-order-excel', async (req, res) => {
             workbook.worksheets.forEach((worksheet) => {
                 applyReplacementsToWorksheet(worksheet, replacements);
             });
+            getOfccOutputWorksheets(workbook).forEach((worksheet) => {
+                scrubWorksheetZerosAndColors(worksheet);
+            });
+            keepOnlyOfccSheets(workbook);
         } else {
             const worksheet = workbook.worksheets[0];
             console.log('Worksheet name:', worksheet.name);
@@ -777,6 +817,10 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             workbook.worksheets.forEach((sheet) => {
                 applyReplacementsToWorksheet(sheet, replacements);
             });
+            getOfccOutputWorksheets(workbook).forEach((worksheet) => {
+                scrubWorksheetZerosAndColors(worksheet);
+            });
+            keepOnlyOfccSheets(workbook);
         } else {
             console.log('Populating Excel template for PDF conversion...');
             await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
