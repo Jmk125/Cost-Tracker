@@ -365,6 +365,25 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         aggregate.generalConditionsBond
     );
     const combinedOhp = roundCurrency(aggregate.laborOhp + aggregate.materialOhp);
+    const feePercent = roundCurrency(Number(project?.feePercentage) || 0);
+    const bondPercent = roundCurrency(Number(project?.bondPercentage) || 0);
+
+    let cmrBond = 0;
+    let previousBond = -1;
+    let iterationCount = 0;
+
+    while (Math.abs(cmrBond - previousBond) >= 0.01 && iterationCount < 200) {
+        previousBond = cmrBond;
+        const overallMaterialForIteration = roundCurrency(materialTotal + cmrBond);
+        const feeAmountForIteration = roundCurrency((laborTotal + overallMaterialForIteration) * (feePercent / 100));
+        const coTotalForIteration = roundCurrency(laborTotal + overallMaterialForIteration + feeAmountForIteration);
+        cmrBond = roundCurrency(coTotalForIteration * (bondPercent / 100));
+        iterationCount += 1;
+    }
+
+    const overallMaterial = roundCurrency(materialTotal + cmrBond);
+    const feeAmount = roundCurrency((laborTotal + overallMaterial) * (feePercent / 100));
+    const coTotal = roundCurrency(laborTotal + overallMaterial + feeAmount);
 
     return {
         '{Project Name}': project?.name || '',
@@ -381,7 +400,12 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         '{Sub Material}': formatCurrency(aggregate.material),
         '{Sub Bond Total}': formatCurrency(aggregate.generalConditionsBond),
         '{M OH&P Total}': formatCurrency(aggregate.materialOhp),
-        '{Material Total}': formatCurrency(materialTotal)
+        '{Material Total}': formatCurrency(materialTotal),
+        '{Fee %}': `${feePercent.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`,
+        '{CMR Bond}': formatCurrency(cmrBond),
+        '{Fee Amnt}': formatCurrency(feeAmount),
+        '{Overal Material}': formatCurrency(overallMaterial),
+        '{CO Total}': formatCurrency(coTotal)
     };
 }
 
@@ -536,7 +560,12 @@ app.post('/api/upload-template', upload.single('template'), async (req, res) => 
                 '{Sub Material}',
                 '{Sub Bond Total}',
                 '{M OH&P Total}',
-                '{Material Total}'
+                '{Material Total}',
+                '{Fee %}',
+                '{CMR Bond}',
+                '{Fee Amnt}',
+                '{Overal Material}',
+                '{CO Total}'
             ];
 
             const workbook = new ExcelJS.Workbook();
