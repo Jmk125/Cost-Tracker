@@ -292,6 +292,115 @@ async function populateExcelTemplate(worksheet, linkedCosts, changeOrderData, pr
     }
 }
 
+function roundCurrency(amount) {
+    return Math.round((amount || 0) * 100) / 100;
+}
+
+function formatCurrency(amount) {
+    return `$${roundCurrency(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function findWorksheetTags(worksheet) {
+    const tags = new Set();
+    worksheet.eachRow((row) => {
+        row.eachCell((cell) => {
+            if (typeof cell.value === 'string') {
+                const matches = cell.value.match(/\{[^}]+\}/g);
+                if (matches) {
+                    matches.forEach(tag => tags.add(tag));
+                }
+            }
+        });
+    });
+    return tags;
+}
+
+function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
+    const rows = Array.isArray(changeOrderData?.ofccBreakdown?.subcontractors)
+        ? changeOrderData.ofccBreakdown.subcontractors
+        : [];
+
+    const aggregate = rows.reduce((totals, row) => {
+        const labor = roundCurrency(Number(row.labor) || 0);
+        const fringes = roundCurrency(Number(row.fringes) || 0);
+        const rentedEquipment = roundCurrency(Number(row.rentedEquipment) || 0);
+        const ownedEquipment = roundCurrency(Number(row.ownedEquipment) || 0);
+        const trucking = roundCurrency(Number(row.trucking) || 0);
+        const material = roundCurrency(Number(row.material) || 0);
+        const generalConditionsBond = roundCurrency(Number(row.generalConditionsBond) || 0);
+        const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
+
+        const laborOhp = roundCurrency((labor + fringes) * (ohpPercent / 100));
+        const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material) * (ohpPercent / 100));
+
+        totals.labor += labor;
+        totals.fringes += fringes;
+        totals.laborOhp += laborOhp;
+        totals.rentedEquipment += rentedEquipment;
+        totals.ownedEquipment += ownedEquipment;
+        totals.trucking += trucking;
+        totals.material += material;
+        totals.materialOhp += materialOhp;
+        totals.generalConditionsBond += generalConditionsBond;
+        return totals;
+    }, {
+        labor: 0,
+        fringes: 0,
+        laborOhp: 0,
+        rentedEquipment: 0,
+        ownedEquipment: 0,
+        trucking: 0,
+        material: 0,
+        materialOhp: 0,
+        generalConditionsBond: 0
+    });
+
+    const laborTotal = roundCurrency(aggregate.labor + aggregate.fringes + aggregate.laborOhp);
+    const materialTotal = roundCurrency(
+        aggregate.rentedEquipment +
+        aggregate.ownedEquipment +
+        aggregate.trucking +
+        aggregate.material +
+        aggregate.materialOhp +
+        aggregate.generalConditionsBond
+    );
+    const combinedOhp = roundCurrency(aggregate.laborOhp + aggregate.materialOhp);
+
+    return {
+        '{Project Name}': project?.name || '',
+        '{CO Number}': changeOrderData.number || changeOrderData.itemNumber || '',
+        '{Description}': changeOrderData.description || '',
+        '{Sub Labor}': formatCurrency(aggregate.labor),
+        '{Fringes Total}': formatCurrency(aggregate.fringes),
+        '{L OH&P Total}': formatCurrency(aggregate.laborOhp),
+        '{OH&P Total}': formatCurrency(combinedOhp),
+        '{Labor Total}': formatCurrency(laborTotal),
+        '{Rented Equip. Total}': formatCurrency(aggregate.rentedEquipment),
+        '{Owned Equip. Total}': formatCurrency(aggregate.ownedEquipment),
+        '{Trucking Total}': formatCurrency(aggregate.trucking),
+        '{Sub Material}': formatCurrency(aggregate.material),
+        '{Sub Bond Total}': formatCurrency(aggregate.generalConditionsBond),
+        '{M OH&P Total}': formatCurrency(aggregate.materialOhp),
+        '{Material Total}': formatCurrency(materialTotal)
+    };
+}
+
+function applyReplacementsToWorksheet(worksheet, replacements) {
+    worksheet.eachRow((row) => {
+        row.eachCell((cell) => {
+            if (typeof cell.value === 'string') {
+                let nextValue = cell.value;
+                for (const [tag, value] of Object.entries(replacements)) {
+                    if (nextValue.includes(tag)) {
+                        nextValue = nextValue.replaceAll(tag, value || '');
+                    }
+                }
+                cell.value = nextValue;
+            }
+        });
+    });
+}
+
 async function prewarmLibreOffice() {
     try {
         console.log('🔥 Pre-warming LibreOffice...');
@@ -386,6 +495,51 @@ app.post('/api/upload-template', upload.single('template'), async (req, res) => 
         if (!isExcel && !isPdf) {
             return res.status(400).json({ error: 'Please upload an Excel file (.xlsx or .xls) or PDF file (.pdf)' });
         }
+
+        if (!projectId) {
+            return res.status(400).json({ error: 'Project ID is required' });
+        }
+
+        const projectData = await loadProjects();
+        const targetProject = projectData.projects.find((p) => String(p.id) === String(projectId));
+
+        if (!targetProject) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        if (isExcel && targetProject.isOfcc) {
+            const requiredOfccTags = [
+                '{Project Name}',
+                '{CO Number}',
+                '{Description}',
+                '{Sub Labor}',
+                '{Fringes Total}',
+                '{OH&P Total}',
+                '{Labor Total}',
+                '{Rented Equip. Total}',
+                '{Owned Equip. Total}',
+                '{Trucking Total}',
+                '{Sub Material}',
+                '{Sub Bond Total}',
+                '{M OH&P Total}',
+                '{Material Total}'
+            ];
+
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.readFile(req.file.path);
+            const allTags = new Set();
+            workbook.worksheets.forEach((worksheet) => {
+                findWorksheetTags(worksheet).forEach(tag => allTags.add(tag));
+            });
+
+            const missingTags = requiredOfccTags.filter(tag => !allTags.has(tag));
+            if (missingTags.length > 0) {
+                await fs.unlink(req.file.path);
+                return res.status(400).json({
+                    error: `OFCC template is missing required tags: ${missingTags.join(', ')}`
+                });
+            }
+        }
         
         // Move template to project-specific location
         const templatePath = path.join(__dirname, 'data', 'templates');
@@ -441,20 +595,27 @@ app.post('/api/generate-change-order-excel', async (req, res) => {
         console.log('Loading Excel file...');
         await workbook.xlsx.readFile(templatePath);
         
-        // Get the first worksheet
         console.log('Worksheet count:', workbook.worksheets.length);
-        const worksheet = workbook.worksheets[0];
-        
-        if (!worksheet) {
+        if (!workbook.worksheets.length) {
             return res.status(500).json({ error: 'No worksheets found in the Excel template' });
         }
-        
-        console.log('Worksheet name:', worksheet.name);
-        console.log('Worksheet has rows:', worksheet.rowCount);
-        
-        // Populate the Excel template
-        console.log('Populating template...');
-        await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+
+        if (project?.isOfcc) {
+            if (!changeOrderData?.ofccBreakdown || !Array.isArray(changeOrderData.ofccBreakdown.subcontractors)) {
+                return res.status(400).json({ error: 'OFCC breakdown data is required before generating the change order.' });
+            }
+
+            const replacements = buildOfccExcelReplacements(linkedCosts, changeOrderData, project);
+            workbook.worksheets.forEach((worksheet) => {
+                applyReplacementsToWorksheet(worksheet, replacements);
+            });
+        } else {
+            const worksheet = workbook.worksheets[0];
+            console.log('Worksheet name:', worksheet.name);
+            console.log('Worksheet has rows:', worksheet.rowCount);
+            console.log('Populating template...');
+            await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+        }
         
         // Save the filled Excel file temporarily
         const tempExcelPath = path.join(__dirname, 'data', 'temp', `CO_${changeOrderData.number || changeOrderData.itemNumber}_${Date.now()}.xlsx`);
@@ -518,8 +679,18 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             return res.status(500).json({ error: 'No worksheets found in the Excel template' });
         }
         
-        console.log('Populating Excel template for PDF conversion...');
-        await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+        if (project?.isOfcc) {
+            if (!changeOrderData?.ofccBreakdown || !Array.isArray(changeOrderData.ofccBreakdown.subcontractors)) {
+                return res.status(400).json({ error: 'OFCC breakdown data is required before generating the change order.' });
+            }
+            const replacements = buildOfccExcelReplacements(linkedCosts, changeOrderData, project);
+            workbook.worksheets.forEach((sheet) => {
+                applyReplacementsToWorksheet(sheet, replacements);
+            });
+        } else {
+            console.log('Populating Excel template for PDF conversion...');
+            await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+        }
         
         // Step 2: Save the populated Excel file temporarily
         const timestamp = Date.now();
