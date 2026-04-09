@@ -209,6 +209,84 @@
             </svg>
         );
 
+        const computeOfccBreakdownTotals = (project, changeOrder, fallbackSubAmount = 0) => {
+            const roundCurrency = (amount) => Math.round((amount || 0) * 100) / 100;
+            const feePercentage = project?.feePercentage || 0;
+            const bondPercentage = project?.bondPercentage || 0;
+            const rows = Array.isArray(changeOrder?.ofccBreakdown?.subcontractors) ? changeOrder.ofccBreakdown.subcontractors : [];
+
+            if (!rows.length) {
+                const subtotal = roundCurrency(fallbackSubAmount);
+                const initialFeeAmount = roundCurrency(subtotal * (feePercentage / 100));
+                const bondBase = roundCurrency(subtotal + initialFeeAmount);
+                const bondAmount = roundCurrency(bondBase * (bondPercentage / 100));
+                const feeAmount = roundCurrency((subtotal + bondAmount) * (feePercentage / 100));
+                return { subtotal, feeAmount, bondAmount, totalAmount: roundCurrency(subtotal + feeAmount + bondAmount) };
+            }
+
+            const aggregate = rows.reduce((totals, row) => {
+                const labor = roundCurrency(Number(row.labor) || 0);
+                const fringes = roundCurrency(Number(row.fringes) || 0);
+                const payrollExpenses = roundCurrency(Number(row.payrollExpenses) || 0);
+                const rentedEquipment = roundCurrency(Number(row.rentedEquipment) || 0);
+                const ownedEquipment = roundCurrency(Number(row.ownedEquipment) || 0);
+                const trucking = roundCurrency(Number(row.trucking) || 0);
+                const material = roundCurrency(Number(row.material) || 0);
+                const generalConditionsBond = roundCurrency(Number(row.generalConditionsBond) || 0);
+                const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
+                const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
+                const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + generalConditionsBond) * (ohpPercent / 100));
+
+                totals.labor += labor;
+                totals.fringes += fringes;
+                totals.payrollExpenses += payrollExpenses;
+                totals.laborOhp += laborOhp;
+                totals.rentedEquipment += rentedEquipment;
+                totals.ownedEquipment += ownedEquipment;
+                totals.trucking += trucking;
+                totals.material += material;
+                totals.materialOhp += materialOhp;
+                totals.generalConditionsBond += generalConditionsBond;
+                return totals;
+            }, {
+                labor: 0,
+                fringes: 0,
+                payrollExpenses: 0,
+                laborOhp: 0,
+                rentedEquipment: 0,
+                ownedEquipment: 0,
+                trucking: 0,
+                material: 0,
+                materialOhp: 0,
+                generalConditionsBond: 0
+            });
+
+            const laborTotal = roundCurrency(aggregate.labor + aggregate.fringes + aggregate.payrollExpenses + aggregate.laborOhp);
+            const materialTotal = roundCurrency(aggregate.rentedEquipment + aggregate.ownedEquipment + aggregate.trucking + aggregate.material + aggregate.materialOhp + aggregate.generalConditionsBond);
+
+            let bondAmount = 0;
+            let previousBond = -1;
+            let iterations = 0;
+            while (Math.abs(bondAmount - previousBond) >= 0.01 && iterations < 200) {
+                previousBond = bondAmount;
+                const overallMaterial = roundCurrency(materialTotal + bondAmount);
+                const feeAmount = roundCurrency((laborTotal + overallMaterial) * (feePercentage / 100));
+                const totalAmount = roundCurrency(laborTotal + overallMaterial + feeAmount);
+                bondAmount = roundCurrency(totalAmount * (bondPercentage / 100));
+                iterations += 1;
+            }
+
+            const overallMaterial = roundCurrency(materialTotal + bondAmount);
+            const feeAmount = roundCurrency((laborTotal + overallMaterial) * (feePercentage / 100));
+            const totalAmount = roundCurrency(laborTotal + overallMaterial + feeAmount);
+            return {
+                subtotal: roundCurrency(laborTotal + materialTotal),
+                feeAmount,
+                bondAmount,
+                totalAmount
+            };
+        };
+
         const calculateCostBreakdown = (project, subAmount, changeOrder = null) => {
             const feePercentage = project?.feePercentage || 0;
             const bondPercentage = project?.bondPercentage || 0;
@@ -219,10 +297,9 @@
             let calculatedBondAmount;
 
             if (project?.isOfcc) {
-                const initialFeeAmount = roundCurrency(subcontractorTotal * (feePercentage / 100));
-                const bondBase = roundCurrency(subcontractorTotal + initialFeeAmount);
-                calculatedBondAmount = roundCurrency(bondBase * (bondPercentage / 100));
-                calculatedFeeAmount = roundCurrency((subcontractorTotal + calculatedBondAmount) * (feePercentage / 100));
+                const ofccTotals = computeOfccBreakdownTotals(project, changeOrder, subcontractorTotal);
+                calculatedBondAmount = ofccTotals.bondAmount;
+                calculatedFeeAmount = ofccTotals.feeAmount;
             } else {
                 calculatedFeeAmount = roundCurrency(subcontractorTotal * (feePercentage / 100));
                 const bondBase = roundCurrency(subcontractorTotal + calculatedFeeAmount);
@@ -433,26 +510,21 @@
         return localStorage.getItem(NOTE_AUTHOR_STORAGE_KEY) || getDefaultNoteAuthor();
     });
 
-    const calculateCostBreakdown = (project, subAmount) => {
-        const feePercentage = project?.feePercentage || 0;
-        const bondPercentage = project?.bondPercentage || 0;
-
+    const calculateCostBreakdown = (project, subAmount, changeOrder = null) => {
+        const roundCurrency = (amount) => Math.round((amount || 0) * 100) / 100;
         if (project?.isOfcc) {
-            const bondAmount = subAmount * (bondPercentage / 100);
-            const feeAmount = (subAmount + bondAmount) * (feePercentage / 100);
-            return {
-                feeAmount,
-                bondAmount,
-                totalAmount: subAmount + bondAmount + feeAmount
-            };
+            return computeOfccBreakdownTotals(project, changeOrder, subAmount);
         }
 
-        const feeAmount = subAmount * (feePercentage / 100);
-        const bondAmount = (subAmount + feeAmount) * (bondPercentage / 100);
+        const feePercentage = project?.feePercentage || 0;
+        const bondPercentage = project?.bondPercentage || 0;
+        const feeAmount = roundCurrency(subAmount * (feePercentage / 100));
+        const bondAmount = roundCurrency((subAmount + feeAmount) * (bondPercentage / 100));
         return {
             feeAmount,
             bondAmount,
-            totalAmount: subAmount + feeAmount + bondAmount
+            totalAmount: roundCurrency(subAmount + feeAmount + bondAmount),
+            subtotal: roundCurrency(subAmount)
         };
     };
 
@@ -2491,7 +2563,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
         const modal = document.createElement('div');
         modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
         modal.innerHTML = `
-            <div class="bg-white rounded-lg p-4 w-full max-w-7xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div class="bg-white rounded-lg p-4 w-[98vw] max-w-[98vw] max-h-[92vh] overflow-hidden flex flex-col">
                 <h3 class="text-lg font-medium text-gray-900 mb-2">OFCC Breakdown Entry</h3>
                 <p class="text-sm text-gray-600 mb-4">Enter each subcontractor's cost breakdown. O&amp;P % defaults to 15 and is used for labor and material calculations.</p>
                 <div class="overflow-auto border rounded">
@@ -2865,6 +2937,37 @@ const handleGeneratePDF = async (changeOrder) => {
                     co.id === changeOrder.id ? { ...co, ofccBreakdown: breakdown } : co
                 )
             });
+
+            const subAmount = linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
+            const generatedTotals = computeOfccBreakdownTotals(project, requestChangeOrderData, subAmount);
+            const displayedTotals = calculateCostBreakdown(project, subAmount, changeOrder);
+            const mismatch = Math.abs((generatedTotals.feeAmount || 0) - (displayedTotals.feeAmount || 0)) >= 0.01 ||
+                Math.abs((generatedTotals.bondAmount || 0) - (displayedTotals.bondAmount || 0)) >= 0.01;
+
+            if (mismatch) {
+                const shouldUpdate = confirm(
+                    `Generated values differ from the Owner Change Order tab.\n\n` +
+                    `Current Fee: $${(displayedTotals.feeAmount || 0).toFixed(2)} | Generated Fee: $${(generatedTotals.feeAmount || 0).toFixed(2)}\n` +
+                    `Current Bond: $${(displayedTotals.bondAmount || 0).toFixed(2)} | Generated Bond: $${(generatedTotals.bondAmount || 0).toFixed(2)}\n\n` +
+                    `Update the Owner Change Order values to match generated values?`
+                );
+
+                if (shouldUpdate) {
+                    requestChangeOrderData = {
+                        ...requestChangeOrderData,
+                        manualFeeAmount: generatedTotals.feeAmount,
+                        manualBondAmount: generatedTotals.bondAmount
+                    };
+                    updateProject({
+                        ...project,
+                        ownerChangeOrders: project.ownerChangeOrders.map((co) =>
+                            co.id === changeOrder.id
+                                ? { ...co, ofccBreakdown: breakdown, manualFeeAmount: generatedTotals.feeAmount, manualBondAmount: generatedTotals.bondAmount }
+                                : co
+                        )
+                    });
+                }
+            }
         }
         
         let costsWithSelectedFiles = linkedCosts;
