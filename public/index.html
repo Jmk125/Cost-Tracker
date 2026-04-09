@@ -2564,7 +2564,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 const ohpPercent = row.ohpPercent || 0;
 
                 const laborOhp = roundCurrency((labor + fringes) * (ohpPercent / 100));
-                const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + material + gcBond) * (ohpPercent / 100));
+                const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + gcBond) * (ohpPercent / 100));
                 const subTotal = roundCurrency(labor + fringes + laborOhp + rentedEquipment + ownedEquipment + trucking + material + materialOhp + gcBond);
                 const subTotalCell = Array.from(modal.querySelectorAll('[data-sub-total-id]')).find(
                     (cell) => cell.getAttribute('data-sub-total-id') === subcontractor

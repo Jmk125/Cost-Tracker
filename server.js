@@ -349,7 +349,7 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
 
         const laborOhp = roundCurrency((labor + fringes) * (ohpPercent / 100));
-        const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + material + generalConditionsBond) * (ohpPercent / 100));
+        const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + generalConditionsBond) * (ohpPercent / 100));
 
         totals.labor += labor;
         totals.fringes += fringes;
