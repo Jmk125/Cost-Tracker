@@ -388,13 +388,27 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
 function applyReplacementsToWorksheet(worksheet, replacements) {
     worksheet.eachRow((row) => {
         row.eachCell((cell) => {
-            if (typeof cell.value === 'string') {
-                let nextValue = cell.value;
-                for (const [tag, value] of Object.entries(replacements)) {
-                    if (nextValue.includes(tag)) {
-                        nextValue = nextValue.replaceAll(tag, value || '');
-                    }
+            const rawValue = cell.value;
+            let sourceText = null;
+
+            if (typeof rawValue === 'string') {
+                sourceText = rawValue;
+            } else if (rawValue && typeof rawValue === 'object' && Array.isArray(rawValue.richText)) {
+                sourceText = rawValue.richText.map(part => part.text || '').join('');
+            }
+
+            if (typeof sourceText !== 'string') {
+                return;
+            }
+
+            let nextValue = sourceText;
+            for (const [tag, value] of Object.entries(replacements)) {
+                if (nextValue.includes(tag)) {
+                    nextValue = nextValue.replaceAll(tag, value || '');
                 }
+            }
+
+            if (nextValue !== sourceText) {
                 cell.value = nextValue;
             }
         });
@@ -557,6 +571,35 @@ app.post('/api/upload-template', upload.single('template'), async (req, res) => 
     } catch (error) {
         console.error('Template upload error:', error);
         res.status(500).json({ error: 'Failed to upload template' });
+    }
+});
+
+app.delete('/api/upload-template/:projectId', async (req, res) => {
+    try {
+        const { projectId } = req.params;
+        const templateDir = path.join(__dirname, 'data', 'templates');
+        const possibleExtensions = ['.xlsx', '.xls', '.pdf'];
+        let deletedAny = false;
+
+        for (const ext of possibleExtensions) {
+            const filePath = path.join(templateDir, `project_${projectId}_template${ext}`);
+            try {
+                await fs.unlink(filePath);
+                deletedAny = true;
+            } catch (err) {
+                if (err.code !== 'ENOENT') {
+                    throw err;
+                }
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: deletedAny ? 'Template deleted successfully' : 'No template file found to delete'
+        });
+    } catch (error) {
+        console.error('Template delete error:', error);
+        return res.status(500).json({ error: 'Failed to delete template' });
     }
 });
 
