@@ -55,8 +55,18 @@ app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '50mb' }));
 
-// Serve static files from public directory
-app.use(express.static('public'));
+// Serve static files from public directory (disable aggressive caching for UI updates)
+app.use(express.static('public', {
+    etag: false,
+    lastModified: false,
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+    }
+}));
 
 // Function to sanitize file/folder names
 function sanitizeFileName(name) {
@@ -292,6 +302,226 @@ async function populateExcelTemplate(worksheet, linkedCosts, changeOrderData, pr
     }
 }
 
+function roundCurrency(amount) {
+    return Math.round((amount || 0) * 100) / 100;
+}
+
+function formatCurrency(amount) {
+    return `$${roundCurrency(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatCurrencyForTemplate(amount) {
+    const rounded = roundCurrency(amount);
+    return rounded === 0 ? '' : formatCurrency(rounded);
+}
+
+function formatPercentForTemplate(percent) {
+    const rounded = roundCurrency(percent);
+    return rounded === 0
+        ? ''
+        : `${rounded.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+function buildChangeOrderFileName(changeOrderData, extension) {
+    const coNumber = sanitizeFileName((changeOrderData?.number || changeOrderData?.itemNumber || 'CO').toString());
+    const description = sanitizeFileName((changeOrderData?.description || 'Description').toString());
+    return `CO-${coNumber}-${description}.${extension}`;
+}
+
+function findWorksheetTags(worksheet) {
+    const tags = new Set();
+    worksheet.eachRow((row) => {
+        row.eachCell((cell) => {
+            if (typeof cell.value === 'string') {
+                const matches = cell.value.match(/\{[^}]+\}/g);
+                if (matches) {
+                    matches.forEach(tag => tags.add(tag));
+                }
+            }
+        });
+    });
+    return tags;
+}
+
+function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
+    const rows = Array.isArray(changeOrderData?.ofccBreakdown?.subcontractors)
+        ? changeOrderData.ofccBreakdown.subcontractors
+        : [];
+
+    const aggregate = rows.reduce((totals, row) => {
+        const labor = roundCurrency(Number(row.labor) || 0);
+        const fringes = roundCurrency(Number(row.fringes) || 0);
+        const payrollExpenses = roundCurrency(Number(row.payrollExpenses) || 0);
+        const rentedEquipment = roundCurrency(Number(row.rentedEquipment) || 0);
+        const ownedEquipment = roundCurrency(Number(row.ownedEquipment) || 0);
+        const trucking = roundCurrency(Number(row.trucking) || 0);
+        const material = roundCurrency(Number(row.material) || 0);
+        const generalConditionsBond = roundCurrency(Number(row.generalConditionsBond) || 0);
+        const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
+
+        const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
+        const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + generalConditionsBond) * (ohpPercent / 100));
+
+        totals.labor += labor;
+        totals.fringes += fringes;
+        totals.payrollExpenses += payrollExpenses;
+        totals.laborOhp += laborOhp;
+        totals.rentedEquipment += rentedEquipment;
+        totals.ownedEquipment += ownedEquipment;
+        totals.trucking += trucking;
+        totals.material += material;
+        totals.materialOhp += materialOhp;
+        totals.generalConditionsBond += generalConditionsBond;
+        return totals;
+    }, {
+        labor: 0,
+        fringes: 0,
+        payrollExpenses: 0,
+        laborOhp: 0,
+        rentedEquipment: 0,
+        ownedEquipment: 0,
+        trucking: 0,
+        material: 0,
+        materialOhp: 0,
+        generalConditionsBond: 0
+    });
+
+    const laborTotal = roundCurrency(aggregate.labor + aggregate.fringes + aggregate.payrollExpenses + aggregate.laborOhp);
+    const materialTotal = roundCurrency(
+        aggregate.rentedEquipment +
+        aggregate.ownedEquipment +
+        aggregate.trucking +
+        aggregate.material +
+        aggregate.materialOhp +
+        aggregate.generalConditionsBond
+    );
+    const feePercent = roundCurrency(Number(project?.feePercentage) || 0);
+    const bondPercent = roundCurrency(Number(project?.bondPercentage) || 0);
+
+    let cmrBond = 0;
+    let previousBond = -1;
+    let iterationCount = 0;
+
+    while (Math.abs(cmrBond - previousBond) >= 0.01 && iterationCount < 200) {
+        previousBond = cmrBond;
+        const overallMaterialForIteration = roundCurrency(materialTotal + cmrBond);
+        const feeAmountForIteration = roundCurrency((laborTotal + overallMaterialForIteration) * (feePercent / 100));
+        const coTotalForIteration = roundCurrency(laborTotal + overallMaterialForIteration + feeAmountForIteration);
+        cmrBond = roundCurrency(coTotalForIteration * (bondPercent / 100));
+        iterationCount += 1;
+    }
+
+    const overallMaterial = roundCurrency(materialTotal + cmrBond);
+    const feeAmount = roundCurrency((laborTotal + overallMaterial) * (feePercent / 100));
+    const coTotal = roundCurrency(laborTotal + overallMaterial + feeAmount);
+
+    return {
+        '{Project Name}': project?.name || '',
+        '{CO Number}': changeOrderData.number || changeOrderData.itemNumber || '',
+        '{Description}': changeOrderData.description || '',
+        '{Sub Labor}': formatCurrencyForTemplate(aggregate.labor),
+        '{Fringes Total}': formatCurrencyForTemplate(aggregate.fringes),
+        '{Payroll Expense Total}': formatCurrencyForTemplate(aggregate.payrollExpenses),
+        '{L OH&P Total}': formatCurrencyForTemplate(aggregate.laborOhp),
+        '{OH&P Total}': formatCurrencyForTemplate(aggregate.laborOhp),
+        '{Labor Total}': formatCurrencyForTemplate(laborTotal),
+        '{Rented Equip. Total}': formatCurrencyForTemplate(aggregate.rentedEquipment),
+        '{Owned Equip. Total}': formatCurrencyForTemplate(aggregate.ownedEquipment),
+        '{Trucking Total}': formatCurrencyForTemplate(aggregate.trucking),
+        '{Sub Material}': formatCurrencyForTemplate(aggregate.material),
+        '{Sub Bond Total}': formatCurrencyForTemplate(aggregate.generalConditionsBond),
+        '{M OH&P Total}': formatCurrencyForTemplate(aggregate.materialOhp),
+        '{Material Total}': formatCurrencyForTemplate(materialTotal),
+        '{Fee %}': formatPercentForTemplate(feePercent),
+        '{CMR Bond}': formatCurrencyForTemplate(cmrBond),
+        '{Fee Amnt}': formatCurrencyForTemplate(feeAmount),
+        '{Overal Material}': formatCurrencyForTemplate(overallMaterial),
+        '{CO Total}': formatCurrencyForTemplate(coTotal)
+    };
+}
+
+function applyReplacementsToWorksheet(worksheet, replacements) {
+    worksheet.eachRow((row) => {
+        row.eachCell((cell) => {
+            const rawValue = cell.value;
+            let sourceText = null;
+
+            if (typeof rawValue === 'string') {
+                sourceText = rawValue;
+            } else if (rawValue && typeof rawValue === 'object' && Array.isArray(rawValue.richText)) {
+                sourceText = rawValue.richText.map(part => part.text || '').join('');
+            }
+
+            if (typeof sourceText !== 'string') {
+                return;
+            }
+
+            let nextValue = sourceText;
+            for (const [tag, value] of Object.entries(replacements)) {
+                if (nextValue.includes(tag)) {
+                    nextValue = nextValue.replaceAll(tag, value || '');
+                }
+            }
+
+            if (nextValue !== sourceText) {
+                cell.value = nextValue;
+            }
+        });
+    });
+}
+
+function getOfccOutputWorksheets(workbook) {
+    const targetSheets = workbook.worksheets.filter((worksheet) => {
+        const name = (worksheet.name || '').toLowerCase();
+        return name.includes('cmr') || name.includes('prime detail');
+    });
+    return targetSheets.length ? targetSheets : workbook.worksheets;
+}
+
+function scrubWorksheetZerosAndColors(worksheet) {
+    const zeroLikePattern = /^\$?\s*0([.,]0+)?\s*%?$/;
+    worksheet.eachRow((row) => {
+        row.eachCell((cell) => {
+            if (typeof cell.value === 'number' && cell.value === 0) {
+                cell.value = null;
+            } else if (typeof cell.value === 'string' && zeroLikePattern.test(cell.value.trim())) {
+                cell.value = '';
+            }
+
+            cell.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFFFFFFF' },
+                bgColor: { argb: 'FFFFFFFF' }
+            };
+        });
+    });
+}
+
+function keepOnlyOfccSheets(workbook) {
+    const targetSheets = getOfccOutputWorksheets(workbook);
+    const targetIds = new Set(targetSheets.map((sheet) => sheet.id));
+    workbook.worksheets
+        .filter((sheet) => !targetIds.has(sheet.id))
+        .forEach((sheet) => workbook.removeWorksheet(sheet.id));
+}
+
+function optimizeOfccPdfPageLayout(workbook) {
+    getOfccOutputWorksheets(workbook).forEach((worksheet) => {
+        const name = (worksheet.name || '').toLowerCase();
+        const existing = worksheet.pageSetup || {};
+        if (name.includes('prime detail')) {
+            worksheet.pageSetup = {
+                ...existing,
+                fitToPage: true,
+                fitToWidth: 1,
+                fitToHeight: 1,
+                scale: undefined
+            };
+        }
+    });
+}
+
 async function prewarmLibreOffice() {
     try {
         console.log('🔥 Pre-warming LibreOffice...');
@@ -386,6 +616,57 @@ app.post('/api/upload-template', upload.single('template'), async (req, res) => 
         if (!isExcel && !isPdf) {
             return res.status(400).json({ error: 'Please upload an Excel file (.xlsx or .xls) or PDF file (.pdf)' });
         }
+
+        if (!projectId) {
+            return res.status(400).json({ error: 'Project ID is required' });
+        }
+
+        const projectData = await loadProjects();
+        const targetProject = projectData.projects.find((p) => String(p.id) === String(projectId));
+
+        if (!targetProject) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        if (isExcel && targetProject.isOfcc) {
+            const requiredOfccTags = [
+                '{Project Name}',
+                '{CO Number}',
+                '{Description}',
+                '{Sub Labor}',
+                '{Fringes Total}',
+                '{Payroll Expense Total}',
+                '{L OH&P Total}',
+                '{Labor Total}',
+                '{Rented Equip. Total}',
+                '{Owned Equip. Total}',
+                '{Trucking Total}',
+                '{Sub Material}',
+                '{Sub Bond Total}',
+                '{M OH&P Total}',
+                '{Material Total}',
+                '{Fee %}',
+                '{CMR Bond}',
+                '{Fee Amnt}',
+                '{Overal Material}',
+                '{CO Total}'
+            ];
+
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.readFile(req.file.path);
+            const allTags = new Set();
+            workbook.worksheets.forEach((worksheet) => {
+                findWorksheetTags(worksheet).forEach(tag => allTags.add(tag));
+            });
+
+            const missingTags = requiredOfccTags.filter(tag => !allTags.has(tag));
+            if (missingTags.length > 0) {
+                await fs.unlink(req.file.path);
+                return res.status(400).json({
+                    error: `OFCC template is missing required tags: ${missingTags.join(', ')}`
+                });
+            }
+        }
         
         // Move template to project-specific location
         const templatePath = path.join(__dirname, 'data', 'templates');
@@ -403,6 +684,66 @@ app.post('/api/upload-template', upload.single('template'), async (req, res) => 
     } catch (error) {
         console.error('Template upload error:', error);
         res.status(500).json({ error: 'Failed to upload template' });
+    }
+});
+
+app.delete('/api/upload-template/:projectId', async (req, res) => {
+    try {
+        const { projectId } = req.params;
+        const templateDir = path.join(__dirname, 'data', 'templates');
+        const possibleExtensions = ['.xlsx', '.xls', '.pdf'];
+        let deletedAny = false;
+
+        for (const ext of possibleExtensions) {
+            const filePath = path.join(templateDir, `project_${projectId}_template${ext}`);
+            try {
+                await fs.unlink(filePath);
+                deletedAny = true;
+            } catch (err) {
+                if (err.code !== 'ENOENT') {
+                    throw err;
+                }
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: deletedAny ? 'Template deleted successfully' : 'No template file found to delete'
+        });
+    } catch (error) {
+        console.error('Template delete error:', error);
+        return res.status(500).json({ error: 'Failed to delete template' });
+    }
+});
+
+app.get('/api/upload-template/:projectId/download', async (req, res) => {
+    try {
+        const { projectId } = req.params;
+        const templateDir = path.join(__dirname, 'data', 'templates');
+        const possibleExtensions = ['.xlsx', '.xls', '.pdf'];
+        let templatePath = null;
+
+        for (const ext of possibleExtensions) {
+            const candidate = path.join(templateDir, `project_${projectId}_template${ext}`);
+            try {
+                await fs.access(candidate);
+                templatePath = candidate;
+                break;
+            } catch (err) {
+                // keep searching
+            }
+        }
+
+        if (!templatePath) {
+            return res.status(404).json({ error: 'Template not found' });
+        }
+
+        const fileName = path.basename(templatePath);
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        return res.sendFile(templatePath);
+    } catch (error) {
+        console.error('Template download error:', error);
+        return res.status(500).json({ error: 'Failed to download template' });
     }
 });
 
@@ -441,20 +782,31 @@ app.post('/api/generate-change-order-excel', async (req, res) => {
         console.log('Loading Excel file...');
         await workbook.xlsx.readFile(templatePath);
         
-        // Get the first worksheet
         console.log('Worksheet count:', workbook.worksheets.length);
-        const worksheet = workbook.worksheets[0];
-        
-        if (!worksheet) {
+        if (!workbook.worksheets.length) {
             return res.status(500).json({ error: 'No worksheets found in the Excel template' });
         }
-        
-        console.log('Worksheet name:', worksheet.name);
-        console.log('Worksheet has rows:', worksheet.rowCount);
-        
-        // Populate the Excel template
-        console.log('Populating template...');
-        await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+
+        if (project?.isOfcc) {
+            if (!changeOrderData?.ofccBreakdown || !Array.isArray(changeOrderData.ofccBreakdown.subcontractors)) {
+                return res.status(400).json({ error: 'OFCC breakdown data is required before generating the change order.' });
+            }
+
+            const replacements = buildOfccExcelReplacements(linkedCosts, changeOrderData, project);
+            workbook.worksheets.forEach((worksheet) => {
+                applyReplacementsToWorksheet(worksheet, replacements);
+            });
+            getOfccOutputWorksheets(workbook).forEach((worksheet) => {
+                scrubWorksheetZerosAndColors(worksheet);
+            });
+            keepOnlyOfccSheets(workbook);
+        } else {
+            const worksheet = workbook.worksheets[0];
+            console.log('Worksheet name:', worksheet.name);
+            console.log('Worksheet has rows:', worksheet.rowCount);
+            console.log('Populating template...');
+            await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+        }
         
         // Save the filled Excel file temporarily
         const tempExcelPath = path.join(__dirname, 'data', 'temp', `CO_${changeOrderData.number || changeOrderData.itemNumber}_${Date.now()}.xlsx`);
@@ -468,8 +820,9 @@ app.post('/api/generate-change-order-excel', async (req, res) => {
         await fs.unlink(tempExcelPath);
         
         // Send as downloadable Excel file
+        const excelFileName = buildChangeOrderFileName(changeOrderData, 'xlsx');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="CO_${changeOrderData.number || changeOrderData.itemNumber}_${Date.now()}.xlsx"`);
+        res.setHeader('Content-Disposition', `attachment; filename="${excelFileName}"`);
         res.send(excelBuffer);
         
     } catch (error) {
@@ -518,8 +871,23 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             return res.status(500).json({ error: 'No worksheets found in the Excel template' });
         }
         
-        console.log('Populating Excel template for PDF conversion...');
-        await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+        if (project?.isOfcc) {
+            if (!changeOrderData?.ofccBreakdown || !Array.isArray(changeOrderData.ofccBreakdown.subcontractors)) {
+                return res.status(400).json({ error: 'OFCC breakdown data is required before generating the change order.' });
+            }
+            const replacements = buildOfccExcelReplacements(linkedCosts, changeOrderData, project);
+            workbook.worksheets.forEach((sheet) => {
+                applyReplacementsToWorksheet(sheet, replacements);
+            });
+            getOfccOutputWorksheets(workbook).forEach((worksheet) => {
+                scrubWorksheetZerosAndColors(worksheet);
+            });
+            keepOnlyOfccSheets(workbook);
+            optimizeOfccPdfPageLayout(workbook);
+        } else {
+            console.log('Populating Excel template for PDF conversion...');
+            await populateExcelTemplate(worksheet, linkedCosts, changeOrderData, project);
+        }
         
         // Step 2: Save the populated Excel file temporarily
         const timestamp = Date.now();
@@ -539,7 +907,8 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             
             // Enhanced LibreOffice command for Raspberry Pi
             const tempDir = path.dirname(tempPdfPath);
-            const command = `timeout 120 libreoffice --headless --invisible --nodefault --nolockcheck --nologo --norestore --convert-to pdf --outdir "${tempDir}" "${tempExcelPath}"`;
+            const pdfFilterOptions = 'pdf:calc_pdf_Export:{"SinglePageSheets":{"type":"boolean","value":"false"}}';
+            const command = `timeout 120 libreoffice --headless --invisible --nodefault --nolockcheck --nologo --norestore --convert-to '${pdfFilterOptions}' --outdir "${tempDir}" "${tempExcelPath}"`;
             console.log('LibreOffice command:', command);
             
             // Set environment variables for better headless operation
@@ -645,8 +1014,9 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             console.log('PDF generation completed successfully');
             
             // Send as downloadable PDF
+            const pdfFileName = buildChangeOrderFileName(changeOrderData, 'pdf');
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="CO_${changeOrderData.number || changeOrderData.itemNumber}_${timestamp}.pdf"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${pdfFileName}"`);
             res.send(Buffer.from(pdfBytes));
             
         } catch (conversionError) {
