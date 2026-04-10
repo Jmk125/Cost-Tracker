@@ -1341,7 +1341,8 @@ app.get('/api/cost-files/:projectName/:subcontractor/:costId', async (req, res) 
     }
 });
 
-// Serve uploaded files
+// Serve uploaded files (legacy and current URL patterns)
+app.use('/api/files', express.static(path.join(__dirname, 'data')));
 app.use('/data', express.static(path.join(__dirname, 'data')));
 
 // Delete a specific file
