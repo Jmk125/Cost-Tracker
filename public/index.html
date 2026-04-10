@@ -2525,9 +2525,20 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
         const existingRows = Array.isArray(changeOrder.ofccBreakdown?.subcontractors)
             ? changeOrder.ofccBreakdown.subcontractors
             : [];
-        const defaultsBySubcontractor = Object.fromEntries(
-            existingRows.map(row => [row.subcontractor, row])
-        );
+        const defaultsBySubcontractor = Object.fromEntries(existingRows.map(row => [row.subcontractor, row]));
+        const linkedSubNames = new Set(linkedCosts.map(cost => cost.subcontractor || ''));
+        const initialRows = [
+            ...linkedCosts.map((cost) => {
+                const existingTierOne = existingRows.find(row => (row.subcontractor || '') === (cost.subcontractor || '') && (Number(row.tier) || 1) === 1);
+                return {
+                    ...(existingTierOne || {}),
+                    subcontractor: cost.subcontractor || existingTierOne?.subcontractor || '',
+                    tier: 1,
+                    files: cost.files || []
+                };
+            }),
+            ...existingRows.filter((row) => (Number(row.tier) || 1) > 1 || !linkedSubNames.has(row.subcontractor || ''))
+        ];
         const escapeHtml = (value) => (value || '').toString()
             .replaceAll('&', '&amp;')
             .replaceAll('<', '&lt;')
@@ -2538,9 +2549,9 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
 
         const buildRow = (cost, index, isAdditional = false) => {
             const subcontractorKey = cost.subcontractor || '';
-            const existing = defaultsBySubcontractor[subcontractorKey] || {};
+            const existing = { ...(defaultsBySubcontractor[subcontractorKey] || {}), ...cost };
             const safeSubcontractor = escapeHtml(subcontractorKey);
-            const subId = `sub-${index}`;
+            const subId = cost.rowId || `sub-${index}`;
             subcontractorLookup[subId] = subcontractorKey;
             const currentTier = existing.tier || (isAdditional ? 2 : 1);
             const parentRowId = cost.parentRowId || existing.parentRowId || '';
@@ -2609,7 +2620,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                                 <th class="px-3 py-2 border text-left text-xs">Sub Total</th>
                             </tr>
                         </thead>
-                        <tbody>${linkedCosts.map(buildRow).join('')}</tbody>
+                        <tbody>${initialRows.map((row, index) => buildRow(row, index + 1, (Number(row.tier) || 1) > 1 || !linkedSubNames.has(row.subcontractor || ''))).join('')}</tbody>
                     </table>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 p-3 bg-gray-50 rounded border">
@@ -2620,6 +2631,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
                 </div>
                 <div class="flex justify-end gap-3 mt-4">
                     <button id="ofcc-cancel" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                    <button id="ofcc-save-close" class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">Save &amp; Close</button>
                     <button id="ofcc-save-excel" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Generate Excel</button>
                     <button id="ofcc-save-pdf" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">Generate PDF</button>
                 </div>
@@ -2846,6 +2858,7 @@ const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
             document.body.removeChild(modal);
             resolve({ subcontractors, outputType });
         };
+        modal.querySelector('#ofcc-save-close').onclick = () => saveAndResolve('save');
         modal.querySelector('#ofcc-save-excel').onclick = () => saveAndResolve('excel');
         modal.querySelector('#ofcc-save-pdf').onclick = () => saveAndResolve('pdf');
     });
@@ -3005,6 +3018,15 @@ const handleGeneratePDF = async (changeOrder) => {
             }
             choice = ofccEntry.outputType || 'excel';
             changeOrder = { ...changeOrder, ofccBreakdown: { subcontractors: ofccEntry.subcontractors } };
+            if (choice === 'save') {
+                updateProject({
+                    ...project,
+                    ownerChangeOrders: project.ownerChangeOrders.map((co) =>
+                        co.id === changeOrder.id ? { ...co, ofccBreakdown: { subcontractors: ofccEntry.subcontractors } } : co
+                    )
+                });
+                return;
+            }
         } else {
             choice = await new Promise((resolve) => {
                 const modal = document.createElement('div');
