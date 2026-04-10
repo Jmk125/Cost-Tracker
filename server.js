@@ -352,6 +352,7 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         ...row,
         rowId: row.rowId || `row-${index}`,
         tier: Number(row.tier) || 1,
+        parentRowId: row.parentRowId || '',
         parentSubcontractor: row.parentSubcontractor || '',
         subcontractor: row.subcontractor || ''
     }));
@@ -413,8 +414,8 @@ function buildOfccExcelReplacements(linkedCosts, changeOrderData, project) {
         const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
 
         const children = normalizedRows.filter(candidate =>
-            candidate.parentSubcontractor &&
-            candidate.parentSubcontractor === row.subcontractor &&
+            ((candidate.parentRowId && candidate.parentRowId === row.rowId) ||
+            (!candidate.parentRowId && candidate.parentSubcontractor && candidate.parentSubcontractor === row.subcontractor)) &&
             candidate.tier === (row.tier + 1)
         );
         const childrenTotals = children.map(candidate => computeRolledTotal(candidate.rowId, depth + 1));
