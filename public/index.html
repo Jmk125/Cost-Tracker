@@ -209,6 +209,84 @@
             </svg>
         );
 
+        const computeOfccBreakdownTotals = (project, changeOrder, fallbackSubAmount = 0) => {
+            const roundCurrency = (amount) => Math.round((amount || 0) * 100) / 100;
+            const feePercentage = project?.feePercentage || 0;
+            const bondPercentage = project?.bondPercentage || 0;
+            const rows = Array.isArray(changeOrder?.ofccBreakdown?.subcontractors) ? changeOrder.ofccBreakdown.subcontractors : [];
+
+            if (!rows.length) {
+                const subtotal = roundCurrency(fallbackSubAmount);
+                const initialFeeAmount = roundCurrency(subtotal * (feePercentage / 100));
+                const bondBase = roundCurrency(subtotal + initialFeeAmount);
+                const bondAmount = roundCurrency(bondBase * (bondPercentage / 100));
+                const feeAmount = roundCurrency((subtotal + bondAmount) * (feePercentage / 100));
+                return { subtotal, feeAmount, bondAmount, totalAmount: roundCurrency(subtotal + feeAmount + bondAmount) };
+            }
+
+            const aggregate = rows.reduce((totals, row) => {
+                const labor = roundCurrency(Number(row.labor) || 0);
+                const fringes = roundCurrency(Number(row.fringes) || 0);
+                const payrollExpenses = roundCurrency(Number(row.payrollExpenses) || 0);
+                const rentedEquipment = roundCurrency(Number(row.rentedEquipment) || 0);
+                const ownedEquipment = roundCurrency(Number(row.ownedEquipment) || 0);
+                const trucking = roundCurrency(Number(row.trucking) || 0);
+                const material = roundCurrency(Number(row.material) || 0);
+                const generalConditionsBond = roundCurrency(Number(row.generalConditionsBond) || 0);
+                const ohpPercent = roundCurrency(Number(row.ohpPercent) || 0);
+                const laborOhp = roundCurrency((labor + fringes + payrollExpenses) * (ohpPercent / 100));
+                const materialOhp = roundCurrency((rentedEquipment + ownedEquipment + trucking + material + generalConditionsBond) * (ohpPercent / 100));
+
+                totals.labor += labor;
+                totals.fringes += fringes;
+                totals.payrollExpenses += payrollExpenses;
+                totals.laborOhp += laborOhp;
+                totals.rentedEquipment += rentedEquipment;
+                totals.ownedEquipment += ownedEquipment;
+                totals.trucking += trucking;
+                totals.material += material;
+                totals.materialOhp += materialOhp;
+                totals.generalConditionsBond += generalConditionsBond;
+                return totals;
+            }, {
+                labor: 0,
+                fringes: 0,
+                payrollExpenses: 0,
+                laborOhp: 0,
+                rentedEquipment: 0,
+                ownedEquipment: 0,
+                trucking: 0,
+                material: 0,
+                materialOhp: 0,
+                generalConditionsBond: 0
+            });
+
+            const laborTotal = roundCurrency(aggregate.labor + aggregate.fringes + aggregate.payrollExpenses + aggregate.laborOhp);
+            const materialTotal = roundCurrency(aggregate.rentedEquipment + aggregate.ownedEquipment + aggregate.trucking + aggregate.material + aggregate.materialOhp + aggregate.generalConditionsBond);
+
+            let bondAmount = 0;
+            let previousBond = -1;
+            let iterations = 0;
+            while (Math.abs(bondAmount - previousBond) >= 0.01 && iterations < 200) {
+                previousBond = bondAmount;
+                const overallMaterial = roundCurrency(materialTotal + bondAmount);
+                const feeAmount = roundCurrency((laborTotal + overallMaterial) * (feePercentage / 100));
+                const totalAmount = roundCurrency(laborTotal + overallMaterial + feeAmount);
+                bondAmount = roundCurrency(totalAmount * (bondPercentage / 100));
+                iterations += 1;
+            }
+
+            const overallMaterial = roundCurrency(materialTotal + bondAmount);
+            const feeAmount = roundCurrency((laborTotal + overallMaterial) * (feePercentage / 100));
+            const totalAmount = roundCurrency(laborTotal + overallMaterial + feeAmount);
+            return {
+                subtotal: roundCurrency(laborTotal + materialTotal),
+                feeAmount,
+                bondAmount,
+                totalAmount
+            };
+        };
+
         const calculateCostBreakdown = (project, subAmount, changeOrder = null) => {
             const feePercentage = project?.feePercentage || 0;
             const bondPercentage = project?.bondPercentage || 0;
@@ -219,10 +297,9 @@
             let calculatedBondAmount;
 
             if (project?.isOfcc) {
-                const initialFeeAmount = roundCurrency(subcontractorTotal * (feePercentage / 100));
-                const bondBase = roundCurrency(subcontractorTotal + initialFeeAmount);
-                calculatedBondAmount = roundCurrency(bondBase * (bondPercentage / 100));
-                calculatedFeeAmount = roundCurrency((subcontractorTotal + calculatedBondAmount) * (feePercentage / 100));
+                const ofccTotals = computeOfccBreakdownTotals(project, changeOrder, subcontractorTotal);
+                calculatedBondAmount = ofccTotals.bondAmount;
+                calculatedFeeAmount = ofccTotals.feeAmount;
             } else {
                 calculatedFeeAmount = roundCurrency(subcontractorTotal * (feePercentage / 100));
                 const bondBase = roundCurrency(subcontractorTotal + calculatedFeeAmount);
@@ -433,26 +510,21 @@
         return localStorage.getItem(NOTE_AUTHOR_STORAGE_KEY) || getDefaultNoteAuthor();
     });
 
-    const calculateCostBreakdown = (project, subAmount) => {
-        const feePercentage = project?.feePercentage || 0;
-        const bondPercentage = project?.bondPercentage || 0;
-
+    const calculateCostBreakdown = (project, subAmount, changeOrder = null) => {
+        const roundCurrency = (amount) => Math.round((amount || 0) * 100) / 100;
         if (project?.isOfcc) {
-            const bondAmount = subAmount * (bondPercentage / 100);
-            const feeAmount = (subAmount + bondAmount) * (feePercentage / 100);
-            return {
-                feeAmount,
-                bondAmount,
-                totalAmount: subAmount + bondAmount + feeAmount
-            };
+            return computeOfccBreakdownTotals(project, changeOrder, subAmount);
         }
 
-        const feeAmount = subAmount * (feePercentage / 100);
-        const bondAmount = (subAmount + feeAmount) * (bondPercentage / 100);
+        const feePercentage = project?.feePercentage || 0;
+        const bondPercentage = project?.bondPercentage || 0;
+        const feeAmount = roundCurrency(subAmount * (feePercentage / 100));
+        const bondAmount = roundCurrency((subAmount + feeAmount) * (bondPercentage / 100));
         return {
             feeAmount,
             bondAmount,
-            totalAmount: subAmount + feeAmount + bondAmount
+            totalAmount: roundCurrency(subAmount + feeAmount + bondAmount),
+            subtotal: roundCurrency(subAmount)
         };
     };
 
@@ -2438,54 +2510,546 @@ const closeStatusHistoryModal = () => {
     setStatusHistoryModal({ isOpen: false, changeOrder: null });
 };
 
+const buildChangeOrderFileName = (changeOrder, extension) => {
+    const sanitize = (value, fallback) => {
+        const safe = (value || fallback || '').toString().trim().replace(/[\\/:*?"<>|]/g, '_');
+        return safe || fallback;
+    };
+    const numberPart = sanitize(changeOrder?.number || changeOrder?.itemNumber, 'CO');
+    const descriptionPart = sanitize(changeOrder?.description, 'Description');
+    return `CO-${numberPart}-${descriptionPart}.${extension}`;
+};
+
+const collectOfccBreakdown = async (changeOrder, linkedCosts) => {
+    return new Promise((resolve) => {
+        const existingRows = Array.isArray(changeOrder.ofccBreakdown?.subcontractors)
+            ? changeOrder.ofccBreakdown.subcontractors
+            : [];
+        const defaultsBySubcontractor = Object.fromEntries(existingRows.map(row => [row.subcontractor, row]));
+        const linkedSubNames = new Set(linkedCosts.map(cost => cost.subcontractor || ''));
+        const initialRows = [
+            ...linkedCosts.map((cost) => {
+                const existingTierOne = existingRows.find(row => (row.subcontractor || '') === (cost.subcontractor || '') && (Number(row.tier) || 1) === 1);
+                return {
+                    ...(existingTierOne || {}),
+                    subcontractor: cost.subcontractor || existingTierOne?.subcontractor || '',
+                    tier: 1,
+                    files: cost.files || []
+                };
+            }),
+            ...existingRows.filter((row) => (Number(row.tier) || 1) > 1 || !linkedSubNames.has(row.subcontractor || ''))
+        ];
+        const escapeHtml = (value) => (value || '').toString()
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+        const subcontractorLookup = {};
+
+        const buildRow = (cost, index, isAdditional = false) => {
+            const subcontractorKey = cost.subcontractor || '';
+            const existing = { ...(defaultsBySubcontractor[subcontractorKey] || {}), ...cost };
+            const safeSubcontractor = escapeHtml(subcontractorKey);
+            const subId = cost.rowId || `sub-${index}`;
+            subcontractorLookup[subId] = subcontractorKey;
+            const currentTier = existing.tier || (isAdditional ? 2 : 1);
+            const parentRowId = cost.parentRowId || existing.parentRowId || '';
+            const parentName = cost.parentSubcontractor || existing.parentSubcontractor || '';
+            const isTieredRow = currentTier > 1 || isAdditional;
+            return `
+                <tr data-ofcc-row="true" data-row-id="${subId}">
+                    <td class="px-3 py-2 border text-sm text-gray-900">
+                        <div class="flex items-center gap-2">
+                            <span>${safeSubcontractor || 'Subcontractor'}</span>
+                            <button type="button" data-add-child="${subId}" class="w-5 h-5 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 leading-none" title="Add Tiered Sub">+</button>
+                            ${isTieredRow ? `<button type="button" data-remove-row="${subId}" class="w-5 h-5 rounded-full bg-red-100 text-red-700 hover:bg-red-200 leading-none" title="Remove Tiered Sub">-</button>` : ''}
+                        </div>
+                    </td>
+                    <td class="px-2 py-1 border"><input data-row-id="${subId}" data-field="subcontractor" type="text" value="${safeSubcontractor}" class="w-36 border rounded px-2 py-1" ${isAdditional ? '' : 'readonly'}></td>
+                    <td class="px-2 py-1 border">
+                        <select data-row-id="${subId}" data-field="tier" class="w-20 border rounded px-2 py-1">
+                            <option value="1" ${currentTier === 1 ? 'selected' : ''}>1</option>
+                            <option value="2" ${currentTier === 2 ? 'selected' : ''}>2</option>
+                            <option value="3" ${currentTier === 3 ? 'selected' : ''}>3</option>
+                        </select>
+                    </td>
+                    <td class="px-2 py-1 border">
+                        <input data-row-id="${subId}" data-field="parentSubcontractor" type="text" value="${parentName}" class="w-36 border rounded px-2 py-1 bg-gray-50" placeholder="Parent sub name" readonly>
+                        <input data-row-id="${subId}" data-field="parentRowId" type="hidden" value="${parentRowId}">
+                    </td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="labor" type="number" step="0.01" min="0" value="${existing.labor ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="fringes" type="number" step="0.01" min="0" value="${existing.fringes ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="payrollExpenses" type="number" step="0.01" min="0" value="${existing.payrollExpenses ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="rentedEquipment" type="number" step="0.01" min="0" value="${existing.rentedEquipment ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="ownedEquipment" type="number" step="0.01" min="0" value="${existing.ownedEquipment ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="trucking" type="number" step="0.01" min="0" value="${existing.trucking ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="material" type="number" step="0.01" min="0" value="${existing.material ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="generalConditionsBond" type="number" step="0.01" min="0" value="${existing.generalConditionsBond ?? ''}" class="w-28 border rounded px-2 py-1"></td>
+                    <td class="px-2 py-1 border"><input data-sub-id="${subId}" data-field="ohpPercent" type="number" step="0.01" min="0" value="${existing.ohpPercent ?? 15}" class="w-24 border rounded px-2 py-1"></td>
+                    <td class="px-3 py-2 border text-xs">${(cost.files && cost.files.length) ? cost.files.map(file => `<a class="text-blue-600 underline" target="_blank" href="/api/files/${file.relativePath}">${(file.originalName || file.filename || 'Open')}</a>`).join('<br/>') : '<span class="text-gray-400">No backup</span>'}</td>
+                    <td class="px-3 py-2 border text-sm font-semibold text-gray-900 whitespace-nowrap" data-sub-total-id="${subId}">$0.00</td>
+                </tr>
+            `;
+        };
+
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-white rounded-lg p-4 w-[98vw] max-w-[98vw] max-h-[92vh] overflow-hidden flex flex-col">
+                <h3 class="text-lg font-medium text-gray-900 mb-2">OFCC Breakdown Entry</h3>
+                <p class="text-sm text-gray-600 mb-4">Enter each subcontractor's cost breakdown. O&amp;P % defaults to 15 and is used for labor and material calculations.</p>
+                <div class="overflow-auto border rounded">
+                    <table class="min-w-full border-collapse">
+                        <thead class="bg-gray-50 sticky top-0">
+                            <tr>
+                                <th class="px-3 py-2 border text-left text-xs">Subcontractor</th>
+                                <th class="px-3 py-2 border text-left text-xs">Entry Sub</th>
+                                <th class="px-3 py-2 border text-left text-xs">Tier</th>
+                                <th class="px-3 py-2 border text-left text-xs">Parent Sub</th>
+                                <th class="px-3 py-2 border text-left text-xs">Labor</th>
+                                <th class="px-3 py-2 border text-left text-xs">Fringes</th>
+                                <th class="px-3 py-2 border text-left text-xs">Payroll Expenses</th>
+                                <th class="px-3 py-2 border text-left text-xs">Rented Equip.</th>
+                                <th class="px-3 py-2 border text-left text-xs">Owned Equip.</th>
+                                <th class="px-3 py-2 border text-left text-xs">Trucking</th>
+                                <th class="px-3 py-2 border text-left text-xs">Material</th>
+                                <th class="px-3 py-2 border text-left text-xs">General Conditions (Bond)</th>
+                                <th class="px-3 py-2 border text-left text-xs">O&amp;P %</th>
+                                <th class="px-3 py-2 border text-left text-xs">Current Backup</th>
+                                <th class="px-3 py-2 border text-left text-xs">Sub Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>${initialRows.map((row, index) => buildRow(row, index + 1, (Number(row.tier) || 1) > 1 || !linkedSubNames.has(row.subcontractor || ''))).join('')}</tbody>
+                    </table>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 p-3 bg-gray-50 rounded border">
+                    <div class="text-sm"><span class="text-gray-600">Fee %:</span> <span class="font-semibold">${Number(project?.feePercentage || 0).toFixed(2)}%</span></div>
+                    <div class="text-sm"><span class="text-gray-600">Fee Amount:</span> <span id="ofcc-fee-preview" class="font-semibold">$0.00</span></div>
+                    <div class="text-sm"><span class="text-gray-600">CMR Bond:</span> <span id="ofcc-bond-preview" class="font-semibold">$0.00</span></div>
+                    <div class="text-sm"><span class="text-gray-600">CO Total:</span> <span id="ofcc-total-preview" class="font-semibold">$0.00</span></div>
+                </div>
+                <div class="flex justify-end gap-3 mt-4">
+                    <button id="ofcc-cancel" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                    <button id="ofcc-save-close" class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700">Save &amp; Close</button>
+                    <button id="ofcc-save-excel" class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Generate Excel</button>
+                    <button id="ofcc-save-pdf" class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">Generate PDF</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const roundCurrency = (amount) => Math.round((Number(amount) || 0) * 100) / 100;
+        const formatCurrency = (amount) => `$${roundCurrency(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const feePercent = roundCurrency(project?.feePercentage || 0);
+        const bondPercent = roundCurrency(project?.bondPercentage || 0);
+
+        const calculateSummary = () => {
+            const bySubcontractor = {};
+            modal.querySelectorAll('tr[data-ofcc-row]').forEach((rowEl) => {
+                const rowId = rowEl.getAttribute('data-row-id');
+                const subcontractorInput = rowEl.querySelector(`[data-row-id="${rowId}"][data-field="subcontractor"]`);
+                const tierInput = rowEl.querySelector(`[data-row-id="${rowId}"][data-field="tier"]`);
+                const parentInput = rowEl.querySelector(`[data-row-id="${rowId}"][data-field="parentSubcontractor"]`);
+                const parentRowIdInput = rowEl.querySelector(`[data-row-id="${rowId}"][data-field="parentRowId"]`);
+                const subcontractor = subcontractorInput ? subcontractorInput.value.trim() : '';
+                bySubcontractor[rowId] = {
+                    subcontractor,
+                    tier: parseInt(tierInput?.value || '1', 10) || 1,
+                    parentSubcontractor: parentInput?.value?.trim() || '',
+                    parentRowId: parentRowIdInput?.value || ''
+                };
+                rowEl.querySelectorAll('input[data-sub-id][data-field], select[data-sub-id][data-field]').forEach((input) => {
+                    const field = input.getAttribute('data-field');
+                    const parsed = parseFloat(input.value);
+                    bySubcontractor[rowId][field] = Number.isNaN(parsed) ? 0 : roundCurrency(parsed);
+                });
+            });
+
+            const entries = Object.entries(bySubcontractor);
+            const totals = {
+                labor: 0,
+                fringes: 0,
+                payrollExpenses: 0,
+                laborOhp: 0,
+                rentedEquipment: 0,
+                ownedEquipment: 0,
+                trucking: 0,
+                material: 0,
+                materialOhp: 0,
+                generalConditionsBond: 0
+            };
+
+            const rowsById = Object.fromEntries(entries);
+            const computedRowTotals = new Map();
+            const computeRolledTotal = (rowId, depth = 0) => {
+                if (depth > 10) return { laborRolled: 0, materialRolled: 0, laborOhp: 0, materialOhp: 0 };
+                if (computedRowTotals.has(rowId)) return computedRowTotals.get(rowId);
+                const row = rowsById[rowId];
+                if (!row) return { laborRolled: 0, materialRolled: 0, laborOhp: 0, materialOhp: 0 };
+                const labor = row.labor || 0;
+                const fringes = row.fringes || 0;
+                const payrollExpenses = row.payrollExpenses || 0;
+                const rentedEquipment = row.rentedEquipment || 0;
+                const ownedEquipment = row.ownedEquipment || 0;
+                const trucking = row.trucking || 0;
+                const material = row.material || 0;
+                const gcBond = row.generalConditionsBond || 0;
+                const ohpPercent = row.ohpPercent || 0;
+                const children = entries
+                    .filter(([, candidate]) =>
+                        ((candidate.parentRowId && candidate.parentRowId === rowId) ||
+                        (!candidate.parentRowId && candidate.parentSubcontractor && candidate.parentSubcontractor === row.subcontractor)) &&
+                        candidate.tier === (row.tier + 1)
+                    )
+                    .map(([childId]) => computeRolledTotal(childId, depth + 1));
+                const childrenLaborRolled = children.reduce((sum, child) => sum + child.laborRolled, 0);
+                const childrenMaterialRolled = children.reduce((sum, child) => sum + child.materialRolled, 0);
+
+                const ownLaborBase = labor + fringes + payrollExpenses;
+                const laborBase = ownLaborBase + childrenLaborRolled;
+                const laborOhp = roundCurrency(laborBase * (ohpPercent / 100));
+                const laborRolled = roundCurrency(laborBase + laborOhp);
+
+                const ownMaterialBase = rentedEquipment + ownedEquipment + trucking + material + gcBond;
+                const materialBase = ownMaterialBase + childrenMaterialRolled;
+                const materialOhp = roundCurrency(materialBase * (ohpPercent / 100));
+                const materialRolled = roundCurrency(materialBase + materialOhp);
+                const subTotal = roundCurrency(laborRolled + materialRolled);
+                const subTotalCell = Array.from(modal.querySelectorAll('[data-sub-total-id]')).find(
+                    (cell) => cell.getAttribute('data-sub-total-id') === rowId
+                );
+                if (subTotalCell) subTotalCell.textContent = formatCurrency(subTotal);
+
+                totals.labor += labor;
+                totals.fringes += fringes;
+                totals.payrollExpenses += payrollExpenses;
+                totals.laborOhp += laborOhp;
+                totals.rentedEquipment += rentedEquipment;
+                totals.ownedEquipment += ownedEquipment;
+                totals.trucking += trucking;
+                totals.material += material;
+                totals.generalConditionsBond += gcBond;
+                const computed = { laborRolled, materialRolled, laborOhp, materialOhp };
+                computedRowTotals.set(rowId, computed);
+                return computed;
+            };
+            entries.forEach(([rowId]) => computeRolledTotal(rowId));
+            totals.laborOhp = roundCurrency(Array.from(computedRowTotals.values()).reduce((sum, row) => sum + row.laborOhp, 0));
+            totals.materialOhp = roundCurrency(Array.from(computedRowTotals.values()).reduce((sum, row) => sum + row.materialOhp, 0));
+
+            const laborTotal = roundCurrency(totals.labor + totals.fringes + totals.payrollExpenses + totals.laborOhp);
+            const materialTotal = roundCurrency(
+                totals.rentedEquipment + totals.ownedEquipment + totals.trucking + totals.material + totals.materialOhp + totals.generalConditionsBond
+            );
+
+            let cmrBond = 0;
+            let previousBond = -1;
+            let iterations = 0;
+            while (Math.abs(cmrBond - previousBond) >= 0.01 && iterations < 200) {
+                previousBond = cmrBond;
+                const overallMaterialIter = roundCurrency(materialTotal + cmrBond);
+                const feeIter = roundCurrency((laborTotal + overallMaterialIter) * (feePercent / 100));
+                const totalIter = roundCurrency(laborTotal + overallMaterialIter + feeIter);
+                cmrBond = roundCurrency(totalIter * (bondPercent / 100));
+                iterations += 1;
+            }
+            const overallMaterial = roundCurrency(materialTotal + cmrBond);
+            const feeAmount = roundCurrency((laborTotal + overallMaterial) * (feePercent / 100));
+            const coTotal = roundCurrency(laborTotal + overallMaterial + feeAmount);
+
+            const feePreview = modal.querySelector('#ofcc-fee-preview');
+            const bondPreview = modal.querySelector('#ofcc-bond-preview');
+            const totalPreview = modal.querySelector('#ofcc-total-preview');
+            if (feePreview) feePreview.textContent = formatCurrency(feeAmount);
+            if (bondPreview) bondPreview.textContent = formatCurrency(cmrBond);
+            if (totalPreview) totalPreview.textContent = formatCurrency(coTotal);
+        };
+
+        const attachRowListeners = () => {
+            modal.querySelectorAll('input[data-sub-id][data-field], input[data-row-id], select[data-row-id]').forEach((input) => {
+                input.oninput = calculateSummary;
+                input.onchange = calculateSummary;
+            });
+            modal.querySelectorAll('button[data-add-child]').forEach((button) => {
+                button.onclick = () => {
+                    const parentRowId = button.getAttribute('data-add-child');
+                    const parentSub = modal.querySelector(`[data-row-id="${parentRowId}"][data-field="subcontractor"]`)?.value || '';
+                    const parentTier = parseInt(modal.querySelector(`[data-row-id="${parentRowId}"][data-field="tier"]`)?.value || '1', 10) || 1;
+                    const childTier = Math.min(parentTier + 1, 3);
+                    if (childTier > 3) {
+                        alert('Tier depth is limited to 3.');
+                        return;
+                    }
+                    const sameTierCount = Array.from(modal.querySelectorAll('tr[data-ofcc-row]'))
+                        .filter((row) => {
+                            const rowId = row.getAttribute('data-row-id');
+                            const tierValue = parseInt(row.querySelector(`[data-row-id="${rowId}"][data-field="tier"]`)?.value || '1', 10) || 1;
+                            return tierValue === childTier;
+                        }).length;
+                    const generatedName = `Tier ${childTier} Sub ${sameTierCount + 1}`;
+                    const tbody = modal.querySelector('tbody');
+                    const nextIndex = tbody.querySelectorAll('tr[data-ofcc-row]').length + 1;
+                    tbody.insertAdjacentHTML('beforeend', buildRow({ subcontractor: generatedName, tier: childTier, parentSubcontractor: parentSub, parentRowId, files: [] }, nextIndex, true));
+                    attachRowListeners();
+                    calculateSummary();
+                };
+            });
+            modal.querySelectorAll('button[data-remove-row]').forEach((button) => {
+                button.onclick = () => {
+                    const removeRowId = button.getAttribute('data-remove-row');
+                    const removeWithChildren = (rowId) => {
+                        Array.from(modal.querySelectorAll('tr[data-ofcc-row]')).forEach((row) => {
+                            const currentRowId = row.getAttribute('data-row-id');
+                            const parentId = row.querySelector(`[data-row-id="${currentRowId}"][data-field="parentRowId"]`)?.value || '';
+                            if (parentId === rowId) {
+                                removeWithChildren(currentRowId);
+                            }
+                        });
+                        const target = modal.querySelector(`tr[data-row-id="${rowId}"]`);
+                        if (target) target.remove();
+                    };
+                    removeWithChildren(removeRowId);
+                    calculateSummary();
+                };
+            });
+        };
+
+        attachRowListeners();
+        calculateSummary();
+
+        modal.querySelector('#ofcc-cancel').onclick = () => {
+            document.body.removeChild(modal);
+            resolve(null);
+        };
+
+        const saveAndResolve = (outputType) => {
+            const bySubcontractor = {};
+            let hasInvalidValue = false;
+            modal.querySelectorAll('tr[data-ofcc-row]').forEach((rowEl) => {
+                const rowId = rowEl.getAttribute('data-row-id');
+                const subcontractor = (rowEl.querySelector(`[data-row-id="${rowId}"][data-field="subcontractor"]`)?.value || '').trim() || subcontractorLookup[rowId] || '';
+                if (!subcontractor) return;
+                bySubcontractor[rowId] = {
+                    rowId,
+                    subcontractor,
+                    tier: parseInt(rowEl.querySelector(`[data-row-id="${rowId}"][data-field="tier"]`)?.value || '1', 10) || 1,
+                    parentSubcontractor: (rowEl.querySelector(`[data-row-id="${rowId}"][data-field="parentSubcontractor"]`)?.value || '').trim(),
+                    parentRowId: rowEl.querySelector(`[data-row-id="${rowId}"][data-field="parentRowId"]`)?.value || ''
+                };
+                rowEl.querySelectorAll('input[data-sub-id][data-field]').forEach((input) => {
+                    const field = input.getAttribute('data-field');
+                    const value = input.value.trim();
+                    const parsed = value === '' ? 0 : parseFloat(value);
+                    if (Number.isNaN(parsed)) {
+                        alert(`Invalid number entered for ${subcontractor} (${field}).`);
+                        hasInvalidValue = true;
+                        return;
+                    }
+                    bySubcontractor[rowId][field] = Math.round(parsed * 100) / 100;
+                });
+            });
+
+            if (hasInvalidValue) {
+                return;
+            }
+
+            const subcontractors = Object.values(bySubcontractor);
+            document.body.removeChild(modal);
+            resolve({ subcontractors, outputType });
+        };
+        modal.querySelector('#ofcc-save-close').onclick = () => saveAndResolve('save');
+        modal.querySelector('#ofcc-save-excel').onclick = () => saveAndResolve('excel');
+        modal.querySelector('#ofcc-save-pdf').onclick = () => saveAndResolve('pdf');
+    });
+};
+
+const collectPdfBackupSelections = async (linkedCosts) => {
+    return new Promise((resolve) => {
+        const getDefaultSelection = (cost) => {
+            if (Array.isArray(cost.files) && cost.files.length > 0) {
+                return cost.files[0].relativePath;
+            }
+            return '';
+        };
+
+        const modal = document.createElement('div');
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        modal.innerHTML = `
+            <div class="bg-white rounded-lg p-4 w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+                <h3 class="text-lg font-medium text-gray-900 mb-2">PDF Backup Attachments</h3>
+                <p class="text-sm text-gray-600 mb-4">Choose backup files to append after the CMR and Prime Detail sheets. You can keep existing, remove, upload new, or ignore.</p>
+                <div class="overflow-auto border rounded">
+                    <table class="min-w-full border-collapse text-sm">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-3 py-2 border text-left">Subcontractor</th>
+                                <th class="px-3 py-2 border text-left">Current Backup</th>
+                                <th class="px-3 py-2 border text-left">Use Existing</th>
+                                <th class="px-3 py-2 border text-left">Upload New</th>
+                                <th class="px-3 py-2 border text-left">Remove / Ignore</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${linkedCosts.map((cost, index) => `
+                                <tr>
+                                    <td class="px-3 py-2 border">${(cost.subcontractor || '').replace(/</g, '&lt;')}</td>
+                                    <td class="px-3 py-2 border">${cost.files && cost.files.length ? cost.files.map(f => `<a class="text-blue-600 underline" target="_blank" href="/api/files/${f.relativePath}">${(f.originalName || f.filename || 'Open').replace(/</g, '&lt;')}</a>`).join('<br/>') : '<span class="text-gray-400">No backup</span>'}</td>
+                                    <td class="px-3 py-2 border">
+                                        <select data-index="${index}" data-field="existing" class="border rounded px-2 py-1 w-full">
+                                            <option value="">None</option>
+                                            ${(cost.files || []).map(file => `<option value="${file.relativePath}" ${getDefaultSelection(cost) === file.relativePath ? 'selected' : ''}>${(file.originalName || file.filename).replace(/</g, '&lt;')}</option>`).join('')}
+                                        </select>
+                                    </td>
+                                    <td class="px-3 py-2 border">
+                                        <input data-index="${index}" data-field="upload" type="file" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xls,.xlsx,.txt" class="text-xs" />
+                                        <div data-index="${index}" data-drop="true" class="mt-2 p-2 border border-dashed border-gray-300 rounded text-xs text-gray-500">Drag & drop file here</div>
+                                    </td>
+                                    <td class="px-3 py-2 border">
+                                        <label class="inline-flex items-center gap-2">
+                                            <input data-index="${index}" data-field="ignore" type="checkbox" />
+                                            <span>Ignore</span>
+                                        </label>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="flex justify-end gap-3 mt-4">
+                    <button id="pdf-backup-cancel" class="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                    <button id="pdf-backup-save" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">Continue</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        modal.querySelectorAll('[data-drop="true"]').forEach((dropZone) => {
+            const index = dropZone.getAttribute('data-index');
+            const uploadInput = modal.querySelector(`input[data-index="${index}"][data-field="upload"]`);
+            dropZone.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                dropZone.classList.add('border-blue-400', 'bg-blue-50');
+            });
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('border-blue-400', 'bg-blue-50');
+            });
+            dropZone.addEventListener('drop', (event) => {
+                event.preventDefault();
+                dropZone.classList.remove('border-blue-400', 'bg-blue-50');
+                const files = event.dataTransfer?.files;
+                if (uploadInput && files && files.length > 0) {
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(files[0]);
+                    uploadInput.files = dataTransfer.files;
+                    dropZone.textContent = files[0].name;
+                }
+            });
+        });
+
+        modal.querySelector('#pdf-backup-cancel').onclick = () => {
+            document.body.removeChild(modal);
+            resolve(null);
+        };
+
+        modal.querySelector('#pdf-backup-save').onclick = async () => {
+            try {
+                const updatedCosts = [];
+                const uploadedUpdates = [];
+                for (let index = 0; index < linkedCosts.length; index++) {
+                    const cost = linkedCosts[index];
+                    const ignoreEl = modal.querySelector(`input[data-index="${index}"][data-field="ignore"]`);
+                    const existingEl = modal.querySelector(`select[data-index="${index}"][data-field="existing"]`);
+                    const uploadEl = modal.querySelector(`input[data-index="${index}"][data-field="upload"]`);
+                    const ignore = !!ignoreEl?.checked;
+                    let selectedFile = ignore ? null : (existingEl?.value || null);
+                    let nextFiles = cost.files || [];
+
+                    if (!ignore && uploadEl?.files && uploadEl.files.length > 0) {
+                        const file = uploadEl.files[0];
+                        const formDataToUpload = new FormData();
+                        formDataToUpload.append('files', file);
+                        formDataToUpload.append('projectId', project.id.toString());
+                        formDataToUpload.append('projectName', project.name);
+                        formDataToUpload.append('subcontractor', cost.subcontractor || 'Unknown');
+                        formDataToUpload.append('costId', cost.id.toString());
+                        formDataToUpload.append('description', cost.description || 'Backup upload');
+
+                        const uploadResponse = await fetch('/api/upload-cost-files', {
+                            method: 'POST',
+                            body: formDataToUpload
+                        });
+                        if (!uploadResponse.ok) {
+                            throw new Error(`Failed to upload backup for ${cost.subcontractor}`);
+                        }
+                        const uploadResult = await uploadResponse.json();
+                        const uploadedFile = uploadResult.files && uploadResult.files[0];
+                        if (uploadedFile) {
+                            nextFiles = [...nextFiles, uploadedFile];
+                            selectedFile = uploadedFile.relativePath;
+                            uploadedUpdates.push({ costId: cost.id, files: nextFiles });
+                        }
+                    }
+
+                    updatedCosts.push({
+                        ...cost,
+                        files: nextFiles,
+                        selectedFile
+                    });
+                }
+                document.body.removeChild(modal);
+                resolve({ updatedCosts, uploadedUpdates });
+            } catch (error) {
+                alert(error.message || 'Failed to process backup attachments.');
+            }
+        };
+    });
+};
+
 const handleGeneratePDF = async (changeOrder) => {
     try {
-        // Show choice dialog
-        const choice = await new Promise((resolve) => {
-            const modal = document.createElement('div');
-            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-            modal.innerHTML = `
-                <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-                    <h3 class="text-lg font-medium text-gray-900 mb-4">Generate Change Order</h3>
-                    <p class="text-sm text-gray-600 mb-6">Choose how you want to generate the change order:</p>
-                    <div class="space-y-3">
-                        <button id="excel-choice" class="w-full px-4 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 text-left">
-                            <div class="font-medium">Excel Form</div>
-                            <div class="text-sm opacity-90">Generate fillable Excel form with calculations</div>
-                        </button>
-                        <button id="pdf-choice" class="w-full px-4 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-left">
-                            <div class="font-medium">PDF with Attachments</div>
-                            <div class="text-sm opacity-90">Generate PDF form and merge with attachment files</div>
-                        </button>
+        let choice = 'excel';
+
+        if (project.isOfcc) {
+            const linkedCostsForOfcc = getLinkedCosts(changeOrder.id);
+            const ofccEntry = await collectOfccBreakdown(changeOrder, linkedCostsForOfcc);
+            if (!ofccEntry) {
+                return;
+            }
+            choice = ofccEntry.outputType || 'excel';
+            changeOrder = { ...changeOrder, ofccBreakdown: { subcontractors: ofccEntry.subcontractors } };
+            if (choice === 'save') {
+                updateProject({
+                    ...project,
+                    ownerChangeOrders: project.ownerChangeOrders.map((co) =>
+                        co.id === changeOrder.id ? { ...co, ofccBreakdown: { subcontractors: ofccEntry.subcontractors } } : co
+                    )
+                });
+                return;
+            }
+        } else {
+            choice = await new Promise((resolve) => {
+                const modal = document.createElement('div');
+                modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+                modal.innerHTML = `
+                    <div class="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                        <h3 class="text-lg font-medium text-gray-900 mb-4">Generate Change Order</h3>
+                        <p class="text-sm text-gray-600 mb-6">Choose output format:</p>
+                        <div class="space-y-3">
+                            <button id="choice-excel" class="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">Excel</button>
+                            <button id="choice-pdf" class="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700">PDF</button>
+                            <button id="choice-cancel" class="w-full px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                        </div>
                     </div>
-                    <button id="cancel-choice" class="w-full mt-4 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">
-                        Cancel
-                    </button>
-                </div>
-            `;
-            
-            document.body.appendChild(modal);
-            
-            modal.querySelector('#excel-choice').onclick = () => {
-                document.body.removeChild(modal);
-                resolve('excel');
-            };
-            
-            modal.querySelector('#pdf-choice').onclick = () => {
-                document.body.removeChild(modal);
-                resolve('pdf');
-            };
-            
-            modal.querySelector('#cancel-choice').onclick = () => {
-                document.body.removeChild(modal);
-                resolve('cancel');
-            };
-        });
-        
-        if (choice === 'cancel') {
-            return;
+                `;
+                document.body.appendChild(modal);
+                modal.querySelector('#choice-excel').onclick = () => { document.body.removeChild(modal); resolve('excel'); };
+                modal.querySelector('#choice-pdf').onclick = () => { document.body.removeChild(modal); resolve('pdf'); };
+                modal.querySelector('#choice-cancel').onclick = () => { document.body.removeChild(modal); resolve(null); };
+            });
+            if (!choice) return;
         }
-        
+
         // Check if template exists
         if (!project.templatePath) {
             alert('Please upload a change order template in Project Settings first.');
@@ -2498,37 +3062,70 @@ const handleGeneratePDF = async (changeOrder) => {
             alert('No linked costs found for this change order.');
             return;
         }
+
+        let requestChangeOrderData = changeOrder;
+        if (project.isOfcc) {
+            const breakdown = changeOrder.ofccBreakdown;
+            if (!breakdown) {
+                return;
+            }
+            requestChangeOrderData = { ...changeOrder, ofccBreakdown: breakdown };
+            updateProject({
+                ...project,
+                ownerChangeOrders: project.ownerChangeOrders.map((co) =>
+                    co.id === changeOrder.id ? { ...co, ofccBreakdown: breakdown } : co
+                )
+            });
+
+            const subAmount = linkedCosts.reduce((sum, cost) => sum + (cost.amount || 0), 0);
+            const generatedTotals = computeOfccBreakdownTotals(project, requestChangeOrderData, subAmount);
+            const displayedTotals = calculateCostBreakdown(project, subAmount, changeOrder);
+            const mismatch = Math.abs((generatedTotals.feeAmount || 0) - (displayedTotals.feeAmount || 0)) >= 0.01 ||
+                Math.abs((generatedTotals.bondAmount || 0) - (displayedTotals.bondAmount || 0)) >= 0.01;
+
+            if (mismatch) {
+                const shouldUpdate = confirm(
+                    `Generated values differ from the Owner Change Order tab.\n\n` +
+                    `Current Fee: $${(displayedTotals.feeAmount || 0).toFixed(2)} | Generated Fee: $${(generatedTotals.feeAmount || 0).toFixed(2)}\n` +
+                    `Current Bond: $${(displayedTotals.bondAmount || 0).toFixed(2)} | Generated Bond: $${(generatedTotals.bondAmount || 0).toFixed(2)}\n\n` +
+                    `Update the Owner Change Order values to match generated values?`
+                );
+
+                if (shouldUpdate) {
+                    requestChangeOrderData = {
+                        ...requestChangeOrderData,
+                        manualFeeAmount: generatedTotals.feeAmount,
+                        manualBondAmount: generatedTotals.bondAmount
+                    };
+                    updateProject({
+                        ...project,
+                        ownerChangeOrders: project.ownerChangeOrders.map((co) =>
+                            co.id === changeOrder.id
+                                ? { ...co, ofccBreakdown: breakdown, manualFeeAmount: generatedTotals.feeAmount, manualBondAmount: generatedTotals.bondAmount }
+                                : co
+                        )
+                    });
+                }
+            }
+        }
         
-        // Handle file selection for costs with multiple files (only needed for PDF with attachments)
         let costsWithSelectedFiles = linkedCosts;
         if (choice === 'pdf') {
-            costsWithSelectedFiles = await Promise.all(
-                linkedCosts.map(async (cost) => {
-                    if (!cost.files || cost.files.length === 0) {
-                        return { ...cost, selectedFile: null };
-                    } else if (cost.files.length === 1) {
-                        return { ...cost, selectedFile: cost.files[0].relativePath };
-                    } else {
-                        // Multiple files - prompt user to select
-                        return new Promise((resolve) => {
-                            const fileOptions = cost.files.map((file, index) => 
-                                `${index + 1}. ${file.originalName || file.filename}`
-                            ).join('\n');
-                            
-                            const selection = prompt(
-                                `Multiple files found for ${cost.subcontractor}:\n${fileOptions}\n\nEnter number (or 0 to skip):`
-                            );
-                            
-                            const selectedIndex = parseInt(selection) - 1;
-                            const selectedFile = (selectedIndex >= 0 && selectedIndex < cost.files.length) 
-                                ? cost.files[selectedIndex].relativePath 
-                                : null;
-                            
-                            resolve({ ...cost, selectedFile });
-                        });
-                    }
-                })
-            );
+            const backupSelection = await collectPdfBackupSelections(linkedCosts);
+            if (!backupSelection) {
+                return;
+            }
+            costsWithSelectedFiles = backupSelection.updatedCosts;
+
+            if (backupSelection.uploadedUpdates.length > 0) {
+                updateProject({
+                    ...project,
+                    subcontractorCosts: project.subcontractorCosts.map((cost) => {
+                        const uploaded = backupSelection.uploadedUpdates.find(entry => entry.costId === cost.id);
+                        return uploaded ? { ...cost, files: uploaded.files } : cost;
+                    })
+                });
+            }
         }
         
         // Choose the appropriate endpoint based on user choice
@@ -2544,7 +3141,7 @@ const handleGeneratePDF = async (changeOrder) => {
                 projectId: project.id,
                 changeOrderId: changeOrder.id,
                 linkedCosts: costsWithSelectedFiles,
-                changeOrderData: changeOrder,
+                changeOrderData: requestChangeOrderData,
                 project: project
             })
         });
@@ -2558,7 +3155,7 @@ const handleGeneratePDF = async (changeOrder) => {
             
             // Set appropriate filename based on choice
             const extension = choice === 'excel' ? 'xlsx' : 'pdf';
-            link.download = `CO_${changeOrder.number || changeOrder.itemNumber}_${Date.now()}.${extension}`;
+            link.download = buildChangeOrderFileName(requestChangeOrderData, extension);
             
             document.body.appendChild(link);
             link.click();
@@ -2928,15 +3525,9 @@ React.createElement('td', {className: "px-6 py-4 whitespace-nowrap text-sm font-
     }, React.createElement(Trash2)),
     React.createElement('button', {
         onClick: () => handleGeneratePDF(co),
-        className: "text-green-600 hover:text-green-900",
+        className: "px-2 py-1 rounded-md bg-green-600 text-white hover:bg-green-700 text-xs font-medium",
         title: "Generate Change Order"
-    }, React.createElement('svg', {className: "lucide-icon", viewBox: "0 0 24 24"}, 
-        React.createElement('path', {d: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"}),
-        React.createElement('polyline', {points: "14,2 14,8 20,8"}),
-        React.createElement('line', {x1: "16", y1: "13", x2: "8", y2: "13"}),
-        React.createElement('line', {x1: "16", y1: "17", x2: "8", y2: "17"}),
-        React.createElement('line', {x1: "10", y1: "9", x2: "8", y2: "9"})
-    ))
+    }, "Generate CO")
 )
                                     ),
                                     isExpanded && linkedCosts.length > 0 && React.createElement('tr', {key: `${co.id}-details`},
@@ -6755,6 +7346,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
 
         const ProjectSettings = ({ project, updateProject, onClose, noteAuthorName, setNoteAuthorName }) => {
             const [settings, setSettings] = useState({
+                projectName: project.name || '',
                 bondPercentage: project.bondPercentage,
                 feePercentage: project.feePercentage,
                 isOfcc: !!project.isOfcc,
@@ -6795,7 +7387,8 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                         setSettings({...settings, templatePath: result.templatePath});
                         alert('Template uploaded successfully!');
                     } else {
-                        throw new Error('Upload failed');
+                        const errorResult = await response.json().catch(() => ({}));
+                        throw new Error(errorResult.error || 'Upload failed');
                     }
                 } catch (error) {
                     console.error('Template upload error:', error);
@@ -6809,6 +7402,7 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 e.preventDefault();
                 updateProject({
                     ...project,
+                    name: settings.projectName,
                     bondPercentage: parseFloat(settings.bondPercentage),
                     feePercentage: parseFloat(settings.feePercentage),
                     isOfcc: settings.isOfcc,
@@ -6817,6 +7411,53 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                 });
                 setNoteAuthorName(localNoteAuthorName.trim());
                 onClose();
+            };
+
+            const handleTemplateDelete = async () => {
+                if (!settings.templatePath) return;
+                if (!confirm('Delete the currently uploaded template?')) return;
+
+                try {
+                    const response = await fetch(`/api/upload-template/${encodeURIComponent(project.id)}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (!response.ok) {
+                        const errorResult = await response.json().catch(() => ({}));
+                        throw new Error(errorResult.error || 'Delete failed');
+                    }
+
+                    setSettings({ ...settings, templatePath: '' });
+                    alert('Template deleted.');
+                } catch (error) {
+                    console.error('Template delete error:', error);
+                    alert('Failed to delete template: ' + error.message);
+                }
+            };
+
+            const handleTemplateDownload = async () => {
+                if (!settings.templatePath) return;
+                try {
+                    const response = await fetch(`/api/upload-template/${encodeURIComponent(project.id)}/download`);
+                    if (!response.ok) {
+                        const errorResult = await response.json().catch(() => ({}));
+                        throw new Error(errorResult.error || 'Download failed');
+                    }
+
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    const extension = settings.templatePath.split('.').pop() || 'xlsx';
+                    link.download = `project_${project.id}_template.${extension}`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
+                } catch (error) {
+                    console.error('Template download error:', error);
+                    alert('Failed to download template: ' + error.message);
+                }
             };
 
             const addSubcontractor = () => {
@@ -6837,6 +7478,16 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
             };
 
             return React.createElement('form', {onSubmit: handleSubmit, className: "space-y-6"},
+                React.createElement('div', null,
+                    React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Project Name"),
+                    React.createElement('input', {
+                        type: "text",
+                        value: settings.projectName,
+                        onChange: (e) => setSettings({...settings, projectName: e.target.value}),
+                        className: "mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md",
+                        required: true
+                    })
+                ),
                 React.createElement('div', {className: "grid grid-cols-2 gap-4"},
                     React.createElement('div', null,
                         React.createElement('label', {className: "block text-sm font-medium text-gray-700"}, "Bond Percentage"),
@@ -6931,7 +7582,20 @@ const AllowanceConsumptionForm = ({ allowances, consumption, onSubmit, onCancel,
                     )
                 ),
                 React.createElement('p', {className: "text-xs text-gray-500"}, "Excel template (.xlsx or .xls) with tagged fields"),
+                settings.isOfcc && React.createElement('p', {className: "text-xs text-amber-700 max-w-xl"},
+                    "Required OFCC tags: {Project Name}, {CO Number}, {Description}, {Sub Labor}, {Fringes Total}, {Payroll Expense Total}, {L OH&P Total}, {Labor Total}, {Rented Equip. Total}, {Owned Equip. Total}, {Trucking Total}, {Sub Material}, {Sub Bond Total}, {M OH&P Total}, {Material Total}, {Fee %}, {CMR Bond}, {Fee Amnt}, {Overal Material}, {CO Total}."
+                ),
                 settings.templatePath && React.createElement('p', {className: "text-xs text-green-600"}, "✓ Template uploaded"),
+                settings.templatePath && React.createElement('button', {
+                    type: "button",
+                    onClick: handleTemplateDownload,
+                    className: "text-xs text-blue-600 hover:text-blue-700 underline"
+                }, "Download uploaded template"),
+                settings.templatePath && React.createElement('button', {
+                    type: "button",
+                    onClick: handleTemplateDelete,
+                    className: "text-xs text-red-600 hover:text-red-700 underline"
+                }, "Delete uploaded template"),
                 isUploadingTemplate && React.createElement('p', {className: "text-xs text-blue-600"}, "Uploading...")
             )
         )
