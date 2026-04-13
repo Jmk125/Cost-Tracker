@@ -4559,7 +4559,7 @@ const ExposureTab = ({ project, updateProject }) => {
     const [filters, setFilters] = useState({
         subcontractor: '',
         description: '',
-        linkedTo: '',
+        linkedCategories: [],
         linkedStatus: '',
         requiredOnly: false,
         exposureOnly: false
@@ -4568,6 +4568,7 @@ const ExposureTab = ({ project, updateProject }) => {
     const [sortDirection, setSortDirection] = useState('asc');
     const [notesModal, setNotesModal] = useState({ isOpen: false, itemId: null, title: '' });
     const [activeHighlight, setActiveHighlight] = useState(null);
+    const [showLinkedCategoryDropdown, setShowLinkedCategoryDropdown] = useState(false);
 
     const HIGHLIGHT_STYLES = {
         amber: {
@@ -4603,6 +4604,32 @@ const ExposureTab = ({ project, updateProject }) => {
         return 'No Cost';
     };
 
+    const LINKED_CATEGORY_OPTIONS = [
+        { key: 'change-order', label: 'Owner Change Orders' },
+        { key: 'cmr', label: 'CMR Contingency' },
+        { key: 'allowance', label: 'Allowances' },
+        { key: 'not-linked', label: 'Not Linked' },
+        { key: 'no-cost', label: 'No Cost' }
+    ];
+
+    const getLinkedCategoryKey = (cost) => {
+        if (!cost.linkedType || !cost.linkedId) return 'not-linked';
+        if (cost.linkedType === 'change-order') return 'change-order';
+        if (cost.linkedType === 'cmr') return 'cmr';
+        if (cost.linkedType === 'allowance') return 'allowance';
+        if (cost.linkedType === 'no-cost') return 'no-cost';
+        return 'not-linked';
+    };
+
+    const toggleLinkedCategoryFilter = (categoryKey) => {
+        setFilters(prev => ({
+            ...prev,
+            linkedCategories: prev.linkedCategories.includes(categoryKey)
+                ? prev.linkedCategories.filter(key => key !== categoryKey)
+                : [...prev.linkedCategories, categoryKey]
+        }));
+    };
+
     const getFilteredAndSortedExposureCosts = () => {
         const mapped = project.subcontractorCosts
             .filter(cost => isExposureCandidate(project, cost))
@@ -4619,7 +4646,7 @@ const ExposureTab = ({ project, updateProject }) => {
             .filter(cost => {
                 if (filters.subcontractor && !cost.subcontractor?.toLowerCase().includes(filters.subcontractor.toLowerCase())) return false;
                 if (filters.description && !cost.description?.toLowerCase().includes(filters.description.toLowerCase())) return false;
-                if (filters.linkedTo && !cost.linkedLabel.toLowerCase().includes(filters.linkedTo.toLowerCase())) return false;
+                if (filters.linkedCategories.length && !filters.linkedCategories.includes(getLinkedCategoryKey(cost))) return false;
                 if (filters.linkedStatus && !cost.linkedStatusLabel.toLowerCase().includes(filters.linkedStatus.toLowerCase())) return false;
                 if (filters.requiredOnly && !cost.requiredWork) return false;
                 if (filters.exposureOnly && !cost.hasExposure) return false;
@@ -4699,6 +4726,18 @@ const ExposureTab = ({ project, updateProject }) => {
 
     const projectedExposureReceivedTotal = exposureReceivedTotal - pendingExposureReceivedTotal;
     const projectedExposureProjectedTotal = exposureProjectedTotal - pendingExposureProjectedTotal;
+    const outstandingCostsTotal = exposureCosts.reduce((sum, cost) => sum + (cost.receivedAmount || 0) + (cost.projectedAmount || 0), 0);
+    const outstandingByCategory = LINKED_CATEGORY_OPTIONS.map(option => {
+        const total = exposureCosts
+            .filter(cost => getLinkedCategoryKey(cost) === option.key)
+            .reduce((sum, cost) => sum + (cost.receivedAmount || 0) + (cost.projectedAmount || 0), 0);
+        const percentage = outstandingCostsTotal > 0 ? (total / outstandingCostsTotal) * 100 : 0;
+        return {
+            ...option,
+            total,
+            percentage
+        };
+    });
 
     const emptyPotentialFundsBreakdown = () => ({
         totalPotentialFunds: 0,
@@ -5110,13 +5149,26 @@ const ExposureTab = ({ project, updateProject }) => {
                     placeholder: 'Description',
                     className: 'px-2 py-1 text-sm border border-gray-300 rounded'
                 }),
-                React.createElement('input', {
-                    type: 'text',
-                    value: filters.linkedTo,
-                    onChange: (e) => setFilters({...filters, linkedTo: e.target.value}),
-                    placeholder: 'Linked To',
-                    className: 'px-2 py-1 text-sm border border-gray-300 rounded'
-                }),
+                React.createElement('div', {className: 'relative'},
+                    React.createElement('button', {
+                        type: 'button',
+                        onClick: () => setShowLinkedCategoryDropdown(!showLinkedCategoryDropdown),
+                        className: 'w-full px-2 py-1 text-sm border border-gray-300 rounded text-left bg-white'
+                    }, filters.linkedCategories.length ? `${filters.linkedCategories.length} Linked Type${filters.linkedCategories.length === 1 ? '' : 's'} Selected` : 'Linked Types'),
+                    showLinkedCategoryDropdown && React.createElement('div', {className: 'absolute z-20 mt-1 w-full min-w-[220px] bg-white border border-gray-300 rounded shadow-lg p-2 space-y-2'},
+                        LINKED_CATEGORY_OPTIONS.map(option =>
+                            React.createElement('label', {key: option.key, className: 'flex items-center text-sm text-gray-700'},
+                                React.createElement('input', {
+                                    type: 'checkbox',
+                                    checked: filters.linkedCategories.includes(option.key),
+                                    onChange: () => toggleLinkedCategoryFilter(option.key),
+                                    className: 'mr-2'
+                                }),
+                                option.label
+                            )
+                        )
+                    )
+                ),
                 React.createElement('input', {
                     type: 'text',
                     value: filters.linkedStatus,
@@ -5141,6 +5193,33 @@ const ExposureTab = ({ project, updateProject }) => {
                         className: 'mr-2'
                     }),
                     'Work performed only'
+                )
+            )
+        ),
+
+        React.createElement('div', {className: 'bg-white rounded-lg shadow p-4'},
+            React.createElement('h3', {className: 'text-sm font-semibold text-gray-800'}, 'Outstanding Costs by Linked Type'),
+            React.createElement('div', {className: 'mt-2 text-sm text-gray-600'},
+                `Total Outstanding Costs: $${outstandingCostsTotal.toLocaleString()}`
+            ),
+            React.createElement('div', {className: 'mt-3 overflow-x-auto'},
+                React.createElement('table', {className: 'min-w-full divide-y divide-gray-200 text-sm'},
+                    React.createElement('thead', {className: 'bg-gray-50'},
+                        React.createElement('tr', null,
+                            React.createElement('th', {className: 'px-3 py-2 text-left font-medium text-gray-500 uppercase tracking-wider'}, 'Linked Type'),
+                            React.createElement('th', {className: 'px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider'}, 'Outstanding Value'),
+                            React.createElement('th', {className: 'px-3 py-2 text-right font-medium text-gray-500 uppercase tracking-wider'}, 'Percent of Total')
+                        )
+                    ),
+                    React.createElement('tbody', {className: 'bg-white divide-y divide-gray-200'},
+                        outstandingByCategory.map(category =>
+                            React.createElement('tr', {key: category.key},
+                                React.createElement('td', {className: 'px-3 py-2 text-gray-900'}, category.label),
+                                React.createElement('td', {className: 'px-3 py-2 text-right text-gray-900 font-medium'}, `$${category.total.toLocaleString()}`),
+                                React.createElement('td', {className: 'px-3 py-2 text-right text-gray-900'}, `${category.percentage.toFixed(1)}%`)
+                            )
+                        )
+                    )
                 )
             )
         ),
