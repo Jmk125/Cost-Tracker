@@ -7,7 +7,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/tailwindcss@2.2.19/dist/tailwind.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script>
     // API Service for server communication
@@ -113,6 +113,18 @@
             stroke-width: 2;
             fill: none;
         }
+        .max-h-\[90vh\] {
+            max-height: 90vh;
+        }
+        .max-h-\[92vh\] {
+            max-height: 92vh;
+        }
+        .w-\[98vw\] {
+            width: 98vw;
+        }
+        .max-w-\[98vw\] {
+            max-width: 98vw;
+        }
     </style>
 </head>
 <body>
@@ -120,7 +132,7 @@
 
     <script>
         const { useState, useEffect } = React;
-        const XLSX = window.XLSX;
+        const sheetJs = window.XLSX;
 
         // Lucide Icons as SVG components
         const icon = (...children) => React.createElement(
@@ -608,7 +620,7 @@
         if (!currentProject) return;
         
         // Create a new workbook
-        const wb = XLSX.utils.book_new();
+        const wb = sheetJs.utils.book_new();
         
         // Helper function to format currency
         const formatCurrency = (amount) => {
@@ -669,7 +681,7 @@
             ]);
         });
         
-        const subCostsSheet = XLSX.utils.aoa_to_sheet(subCostsData);
+        const subCostsSheet = sheetJs.utils.aoa_to_sheet(subCostsData);
         
         // Set column widths for subcontractor costs
         subCostsSheet['!cols'] = [
@@ -685,7 +697,7 @@
             {wch: 50}  // Notes
         ];
         
-        XLSX.utils.book_append_sheet(wb, subCostsSheet, "Subcontractor Costs");
+        sheetJs.utils.book_append_sheet(wb, subCostsSheet, "Subcontractor Costs");
         
         // 2. CHANGE ORDERS SHEET
         const changeOrdersData = [
@@ -733,7 +745,7 @@
             ]);
         });
         
-        const changeOrdersSheet = XLSX.utils.aoa_to_sheet(changeOrdersData);
+        const changeOrdersSheet = sheetJs.utils.aoa_to_sheet(changeOrdersData);
         
         changeOrdersSheet['!cols'] = [
             {wch: 8},  // Item #
@@ -751,7 +763,7 @@
             {wch: 40}  // Linked Costs
         ];
         
-        XLSX.utils.book_append_sheet(wb, changeOrdersSheet, "Change Orders");
+        sheetJs.utils.book_append_sheet(wb, changeOrdersSheet, "Change Orders");
         
         // 3. ALLOWANCES SHEET
         const allowancesData = [
@@ -812,7 +824,7 @@
             ]);
         });
         
-        const allowancesSheet = XLSX.utils.aoa_to_sheet(allowancesData);
+        const allowancesSheet = sheetJs.utils.aoa_to_sheet(allowancesData);
         
         allowancesSheet['!cols'] = [
             {wch: 12}, // Type
@@ -826,7 +838,7 @@
             {wch: 40}  // Linked Costs
         ];
         
-        XLSX.utils.book_append_sheet(wb, allowancesSheet, "Allowances");
+        sheetJs.utils.book_append_sheet(wb, allowancesSheet, "Allowances");
         
         // 4. CMR CONTINGENCY SHEET
         const cmrData = [
@@ -939,7 +951,7 @@
             ]);
         });
         
-        const cmrSheet = XLSX.utils.aoa_to_sheet(cmrData);
+        const cmrSheet = sheetJs.utils.aoa_to_sheet(cmrData);
         
         cmrSheet['!cols'] = [
             {wch: 12}, // Type
@@ -950,7 +962,7 @@
             {wch: 40}  // Linked Costs
         ];
         
-        XLSX.utils.book_append_sheet(wb, cmrSheet, "CMR Contingency");
+        sheetJs.utils.book_append_sheet(wb, cmrSheet, "CMR Contingency");
         
         // 5. PROJECT SUMMARY SHEET
         const summaryData = [
@@ -986,18 +998,18 @@
             ['CMR Spent', totalCMRSpent]
         ];
         
-        const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+        const summarySheet = sheetJs.utils.aoa_to_sheet(summaryData);
         
         summarySheet['!cols'] = [
             {wch: 25}, // Labels
             {wch: 30}  // Values
         ];
         
-        XLSX.utils.book_append_sheet(wb, summarySheet, "Project Summary");
+        sheetJs.utils.book_append_sheet(wb, summarySheet, "Project Summary");
         
         // Generate and download the file
         const fileName = `${currentProject.name.replace(/[^a-z0-9]/gi, '_')}_export_${new Date().toISOString().split('T')[0]}.xlsx`;
-        XLSX.writeFile(wb, fileName);
+        sheetJs.writeFile(wb, fileName);
     };
     
     const validateImportData = (data) => {
