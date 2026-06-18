@@ -10,6 +10,23 @@ const ExcelJS = require('exceljs');
 const app = express();
 const PORT = 3010;
 const DATA_FILE = path.join(__dirname, 'data', 'projects.json');
+const LIBREOFFICE_TIMEOUT_MS = Number(process.env.LIBREOFFICE_TIMEOUT_MS || 300000);
+const LIBREOFFICE_TIMEOUT_SECONDS = Math.ceil(LIBREOFFICE_TIMEOUT_MS / 1000);
+
+function buildLibreOfficeEnv(tempDir, profileDir = null) {
+    return {
+        ...process.env,
+        DISPLAY: process.env.DISPLAY || ':99',
+        HOME: profileDir || process.env.HOME || '/tmp',
+        TMPDIR: tempDir,
+        SAL_DISABLE_OPENCL: '1',
+        SAL_NO_OOSPLASH: '1',
+    };
+}
+
+function getLibreOfficeTimeoutMessage() {
+    return `LibreOffice conversion timed out after ${LIBREOFFICE_TIMEOUT_SECONDS} seconds. This is common on Raspberry Pi when LibreOffice is not fully configured or another LibreOffice process is stuck. Please retry, use the Excel option, or restart LibreOffice/the app and run the setup script.`;
+}
 
 function calculateCostBreakdown(subcontractorTotal, project, changeOrderData = null) {
     const feePercentage = (project && project.feePercentage) ? project.feePercentage : 10;
@@ -580,25 +597,22 @@ function optimizeOfccPdfPageLayout(workbook) {
 async function prewarmLibreOffice() {
     try {
         console.log('🔥 Pre-warming LibreOffice...');
-        const { exec } = require('child_process');
+        const { execFile } = require('child_process');
         const util = require('util');
-        const execPromise = util.promisify(exec);
-        
-        const env = {
-            ...process.env,
-            DISPLAY: ':99',
-            HOME: process.env.HOME || '/tmp',
-            SAL_DISABLE_OPENCL: '1',
-            SAL_NO_OOSPLASH: '1',
-        };
+        const execFilePromise = util.promisify(execFile);
+        const tempDir = path.join(__dirname, 'data', 'temp');
+        const profileDir = path.join(tempDir, 'libreoffice-prewarm-profile');
+        await fs.mkdir(profileDir, { recursive: true });
+        const env = buildLibreOfficeEnv(tempDir, profileDir);
         
         // Just get the version - this loads LibreOffice into memory
-        await execPromise('timeout 45 libreoffice --headless --invisible --version', { 
+        await execFilePromise('libreoffice', ['--headless', '--invisible', '--version'], {
             env,
-            timeout: 45000 
+            timeout: Math.min(LIBREOFFICE_TIMEOUT_MS, 60000)
         });
         
         console.log('✅ LibreOffice pre-warmed successfully');
+        await fs.rm(profileDir, { recursive: true, force: true });
     } catch (error) {
         console.log('⚠️ LibreOffice pre-warm failed (this is not critical):', error.message);
         console.log('   PDF generation may be slower on first use');
@@ -951,33 +965,43 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
         await workbook.xlsx.writeFile(tempExcelPath);
         
         // Step 3: Convert Excel to PDF with enhanced LibreOffice handling
-        const { exec } = require('child_process');
+        const { execFile } = require('child_process');
         const util = require('util');
-        const execPromise = util.promisify(exec);
+        const execFilePromise = util.promisify(execFile);
         
         const tempPdfPath = tempExcelPath.replace('.xlsx', '.pdf').replace('.xls', '.pdf');
         
         try {
             console.log('Converting Excel to PDF using LibreOffice...');
             
-            // Enhanced LibreOffice command for Raspberry Pi
+            // Enhanced LibreOffice command for Raspberry Pi. Use a dedicated profile so
+            // existing LibreOffice locks do not make headless conversion hang.
             const tempDir = path.dirname(tempPdfPath);
+            const profileDir = path.join(tempDir, `libreoffice-profile-${timestamp}`);
+            await fs.mkdir(profileDir, { recursive: true });
             const pdfFilterOptions = 'pdf:calc_pdf_Export:{"SinglePageSheets":{"type":"boolean","value":"false"}}';
-            const command = `timeout 120 libreoffice --headless --invisible --nodefault --nolockcheck --nologo --norestore --convert-to '${pdfFilterOptions}' --outdir "${tempDir}" "${tempExcelPath}"`;
-            console.log('LibreOffice command:', command);
+            const libreOfficeArgs = [
+                `-env:UserInstallation=file://${profileDir}`,
+                '--headless',
+                '--invisible',
+                '--nodefault',
+                '--nolockcheck',
+                '--nologo',
+                '--norestore',
+                '--convert-to',
+                pdfFilterOptions,
+                '--outdir',
+                tempDir,
+                tempExcelPath
+            ];
+            console.log('LibreOffice command:', 'libreoffice', libreOfficeArgs.join(' '));
+            console.log(`LibreOffice timeout: ${LIBREOFFICE_TIMEOUT_SECONDS} seconds`);
             
             // Set environment variables for better headless operation
-            const env = {
-                ...process.env,
-                DISPLAY: ':99',
-                HOME: process.env.HOME || '/tmp',
-                TMPDIR: tempDir,
-                SAL_DISABLE_OPENCL: '1',
-                SAL_NO_OOSPLASH: '1',
-            };
+            const env = buildLibreOfficeEnv(tempDir, profileDir);
             
-            const { stdout, stderr } = await execPromise(command, { 
-                timeout: 120000, // 2 minutes timeout
+            const { stdout, stderr } = await execFilePromise('libreoffice', libreOfficeArgs, {
+                timeout: LIBREOFFICE_TIMEOUT_MS,
                 env: env,
                 maxBuffer: 1024 * 1024 * 10
             });
@@ -1059,6 +1083,7 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
             try {
                 await fs.unlink(tempExcelPath);
                 await fs.unlink(tempPdfPath);
+                await fs.rm(profileDir, { recursive: true, force: true });
             } catch (cleanupError) {
                 console.error('Error cleaning up temp files:', cleanupError);
             }
@@ -1077,22 +1102,24 @@ app.post('/api/generate-change-order-pdf', async (req, res) => {
         } catch (conversionError) {
             console.error('LibreOffice conversion failed:', conversionError);
             
-            // Clean up temp Excel file
+            // Clean up temp conversion files
             try {
                 await fs.unlink(tempExcelPath);
+                await fs.unlink(tempPdfPath).catch(() => {});
+                await fs.rm(path.join(path.dirname(tempExcelPath), `libreoffice-profile-${timestamp}`), { recursive: true, force: true });
             } catch (cleanupError) {
-                console.error('Error cleaning up temp Excel file:', cleanupError);
+                console.error('Error cleaning up temp conversion files:', cleanupError);
             }
             
             // Provide helpful error messages
             if (conversionError.signal === 'SIGTERM' || conversionError.code === null) {
                 return res.status(500).json({ 
-                    error: 'LibreOffice conversion timed out. This is common on Raspberry Pi. Please try the Excel option instead, or run the setup script to configure LibreOffice properly.',
-                    details: 'LibreOffice timeout - try Excel generation or setup LibreOffice'
+                    error: getLibreOfficeTimeoutMessage(),
+                    details: `LibreOffice timeout after ${LIBREOFFICE_TIMEOUT_SECONDS} seconds - try Excel generation, restart LibreOffice/the app, or setup LibreOffice`
                 });
             } else {
                 return res.status(500).json({ 
-                    error: 'Failed to convert Excel to PDF. Please run the LibreOffice setup script or use the Excel option instead.',
+                    error: 'Failed to convert Excel to PDF. Please restart LibreOffice/the app, run the LibreOffice setup script, or use the Excel option instead.',
                     details: conversionError.message
                 });
             }
