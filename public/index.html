@@ -511,6 +511,67 @@
         };
     };
 
+    const formatCombinedBarTooltipCurrency = (amount) => {
+        const numericAmount = Number(amount) || 0;
+        return numericAmount.toLocaleString('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            maximumFractionDigits: 0
+        });
+    };
+
+    const formatCombinedBarTooltipCostPerSf = (amount, squareFootage) => {
+        const numericAmount = Number(amount) || 0;
+        const numericSquareFootage = Number(squareFootage) || 0;
+
+        if (numericSquareFootage <= 0) {
+            return 'N/A';
+        }
+
+        return `${(numericAmount / numericSquareFootage).toLocaleString('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        })}/SF`;
+    };
+
+    const formatCombinedBarTooltipDelta = (currentAmount, comparisonAmount) => {
+        const currentTotal = Number(currentAmount) || 0;
+        const comparisonTotal = Number(comparisonAmount) || 0;
+
+        if (comparisonTotal === 0) {
+            return currentTotal === 0 ? '0.0%' : 'N/A';
+        }
+
+        const delta = ((currentTotal - comparisonTotal) / comparisonTotal) * 100;
+        const sign = delta > 0 ? '+' : '';
+        return `${sign}${delta.toFixed(1)}%`;
+    };
+
+    const buildCombinedBarTooltipLines = (activeBar, combinedBars = [], squareFootage = 0) => {
+        if (!activeBar) {
+            return [];
+        }
+
+        const activeLabel = activeBar.label || activeBar.name || 'Selected Bar';
+        const activeTotal = Number(activeBar.total ?? activeBar.value ?? activeBar.amount) || 0;
+
+        const comparisonLines = combinedBars
+            .filter(bar => bar && bar !== activeBar)
+            .map(bar => {
+                const comparisonLabel = bar.label || bar.name || 'Comparison';
+                const comparisonTotal = Number(bar.total ?? bar.value ?? bar.amount) || 0;
+                return `${formatCombinedBarTooltipDelta(activeTotal, comparisonTotal)} vs ${comparisonLabel}`;
+            });
+
+        return [
+            `${activeLabel}: ${formatCombinedBarTooltipCurrency(activeTotal)}`,
+            `Cost/SF: ${formatCombinedBarTooltipCostPerSf(activeTotal, squareFootage)}`,
+            ...comparisonLines
+        ];
+    };
+
     // Load projects from server on mount
     useEffect(() => {
         localStorage.removeItem(NOTE_AUTHOR_STORAGE_KEY);
